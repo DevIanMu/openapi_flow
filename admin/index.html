@@ -3,969 +3,1365 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>云锋有鱼 · OpenAPI 申请与管理 — Overview 原型</title>
+<title>云锋有鱼 · OpenAPI 管理后台 MVP Demo</title>
 
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<!--
+  ============================================================================
+  云锋有鱼 OpenAPI 管理后台 MVP · 高保真可交互 Demo
+  ----------------------------------------------------------------------------
+  依据: docs/superpowers/specs/2026-08-26-openapi-admin-backend-design.md
+       （申请管理 + 服务管理两个模块，状态机与 APP 端 1:1 对齐）
+  视觉: DESIGN-visual.md（Coinbase 风格机构级设计体系，antd v5 ConfigProvider
+        theme token 覆盖：主色 #0052ff / pill 按钮 / hairline 分隔 / 单档阴影）
+  假设 (Assumptions):
+  1. 全部数据为内存 mock，刷新即重置；登录任意账号密码均可进入（demo）
+  2. Header 的「角色切换器（管理员/只读）」为 demo 便利功能，真实产品由账号
+     角色决定；只读角色下所有操作按钮不渲染
+  3. 当前登录账号名直接作为操作日志的「操作人」
+  4. APISecret 按安全约定全站不出现；APIKey 仅展示掩码
+  5. 服务「已注销」客户的 Key 展示为「已失效」灰色态（规范只定义正常/已暂停，
+     失效为已注销服务的派生展示）
+  6. 做市/高频打标数据在 mock 中直接给出，真实环境由后端在开通时触发
+  7. 复制按钮在 file:// 下若剪贴板 API 不可用，退化为提示展示完整掩码
+  8. 风控记录模块为只读事实数据；每条记录的「处置结果」字段统一抽象触发后的
+     实际后果（已拒单 / 阻断 API·已暂停 Key / 系统外处置·待重新 KYC / 待书面
+     问询），系统外处置的跟进（重新 KYC、书面问询、STR 评估）走系统外流程
+  ============================================================================
+-->
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/dayjs@1/dayjs.min.js"></script>
+<script src="https://unpkg.com/dayjs@1/locale/zh-cn.js"></script>
+<script src="https://unpkg.com/antd@5/dist/antd.min.js"></script>
+<script src="https://unpkg.com/@ant-design/icons@5/dist/index.umd.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
   body {
-    font-family: 'Inter', -apple-system, system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    background: #eef0f3;
+    font-family: 'Inter', -apple-system, system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #f7f7f7;
     color: #0a0b0d;
     -webkit-font-smoothing: antialiased;
   }
-  ::-webkit-scrollbar { width: 0; height: 0; }
+  #root { min-height: 100vh; }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+  .row-clickable { cursor: pointer; }
+  .qa-other-fill {
+    background: rgba(207, 32, 47, 0.06);
+    border: 1px solid rgba(207, 32, 47, 0.25);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #cf202f;
+    margin-top: 6px;
+    font-size: 13px;
+  }
+  .sider-logo {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    border-bottom: 1px solid #dee1e6;
+  }
+  .login-card-shadow { box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
 </style>
 </head>
 <body>
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState } = React;
+const { useState, useMemo } = React;
+const {
+  Layout, Menu, Button, Table, Tag, Select, Input, DatePicker, Radio, Modal,
+  Popconfirm, Card, Descriptions, Space, Typography, ConfigProvider, Form,
+  Divider, Badge, Tooltip, Alert, Empty, Segmented, App: AntApp
+} = antd;
+const { RangePicker } = DatePicker;
+const { Text, Title, Paragraph, Link } = Typography;
+const {
+  LoginOutlined, CopyOutlined, FileSearchOutlined, ControlOutlined,
+  LogoutOutlined, ArrowLeftOutlined,
+  ExclamationCircleFilled, ApiOutlined, UserOutlined, SafetyCertificateOutlined,
+  PauseCircleOutlined, PlayCircleOutlined, StopOutlined, DeleteOutlined, SafetyOutlined
+} = window.icons || {};
 
-/* ============================================================
-   设计 token —— 来自 DESIGN-visual.md（Coinbase 体系）
-   深色映射：canvas=#0a0b0d，card=#16181c（surface-dark-elevated）
-   主色 #0052ff 是唯一的 action 色；涨绿/跌红仅语义文字
-   ============================================================ */
-const T = {
+dayjs.locale('zh-cn');
+const zhCN = (antd.locales && antd.locales.zh_CN) || (antd.locale && antd.locale.zhCN) || undefined;
+
+/* ==========================================================================
+   常量与工具
+   ========================================================================== */
+
+const COLOR = {
   primary: '#0052ff',
   primaryActive: '#003ecc',
-  primaryDisabled: '#a8b8cc',
-  canvas: '#0a0b0d',
-  card: '#16181c',
-  cardSoft: '#1d2026',
-  hairline: 'rgba(255,255,255,0.08)',
-  ink: '#ffffff',
-  body: '#a8acb3',
+  ink: '#0a0b0d',
+  body: '#5b616e',
   muted: '#7c828a',
+  hairline: '#dee1e6',
+  hairlineSoft: '#eef0f3',
+  canvas: '#ffffff',
+  surfaceSoft: '#f7f7f7',
+  surfaceStrong: '#eef0f3',
   up: '#05b169',
   down: '#cf202f',
-  yellow: '#f4b000',
-  font: "'Inter', -apple-system, system-ui, 'PingFang SC', sans-serif",
-  mono: "'JetBrains Mono', 'Inter', monospace",
+  warn: '#b25e09'
 };
 
-/* ============================================================
-   IosFrame —— 取自 skill 标准资产 assets/ios_frame.jsx，勿手改
-   ============================================================ */
-const iosFrameStyles = {
-  wrapper: {
-    display: 'inline-block',
-    padding: 12,
-    background: '#000',
-    borderRadius: 60,
-    boxShadow: '0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)',
-    position: 'relative',
-  },
-  screen: {
-    position: 'relative',
-    borderRadius: 48,
-    overflow: 'hidden',
-    background: '#fff',
-  },
-  statusBar: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 54,
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '0 32px 0 32px', fontSize: 16, fontWeight: 600,
-    fontFamily: '-apple-system, "SF Pro Text", sans-serif',
-    zIndex: 20, pointerEvents: 'none',
-  },
-  dynamicIsland: {
-    position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
-    width: 124, height: 36, background: '#000', borderRadius: 999, zIndex: 30,
-  },
-  statusIcons: { display: 'flex', alignItems: 'center', gap: 6 },
-  signalIcon: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 12 },
-  signalBar: { width: 3, background: 'currentColor', borderRadius: 1 },
-  wifiIcon: { width: 16, height: 12, position: 'relative' },
-  batteryIcon: {
-    width: 26, height: 12, border: '1.5px solid currentColor',
-    borderRadius: 3, padding: 1, position: 'relative', opacity: 0.8,
-  },
-  batteryCap: {
-    position: 'absolute', top: 3, right: -3, width: 2, height: 6,
-    background: 'currentColor', borderRadius: '0 1px 1px 0',
-  },
-  content: { position: 'absolute', top: 54, left: 0, right: 0, bottom: 34, overflow: 'auto' },
-  homeIndicator: {
-    position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
-    width: 140, height: 5, background: 'rgba(0,0,0,0.3)', borderRadius: 999, zIndex: 10,
-  },
-  homeIndicatorDark: { background: 'rgba(255,255,255,0.5)' },
+const APPLY_STATUS = {
+  reviewing: { text: '审核中', color: 'orange' },
+  approved:  { text: '已审核', color: 'blue' },
+  rejected:  { text: '已驳回', color: 'red' },
+  opened:    { text: '已开通', color: 'green' }
 };
 
-function IosFrame({ children, width = 393, height = 852, time = '9:41', battery = 100, darkMode = false }) {
-  const textColor = darkMode ? '#fff' : '#000';
-  return (
-    <div style={iosFrameStyles.wrapper}>
-      <div style={{ ...iosFrameStyles.screen, width, height, background: darkMode ? '#000' : '#fff' }}>
-        <div style={{ ...iosFrameStyles.statusBar, color: textColor }}>
-          <span>{time}</span>
-          <div style={iosFrameStyles.statusIcons}>
-            <div style={iosFrameStyles.signalIcon}>
-              <div style={{ ...iosFrameStyles.signalBar, height: 4 }} />
-              <div style={{ ...iosFrameStyles.signalBar, height: 6 }} />
-              <div style={{ ...iosFrameStyles.signalBar, height: 9 }} />
-              <div style={{ ...iosFrameStyles.signalBar, height: 11 }} />
-            </div>
-            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color: textColor }}>
-              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
-              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
-            </svg>
-            <div style={iosFrameStyles.batteryIcon}>
-              <div style={{ width: `${battery}%`, height: '100%', background: 'currentColor', borderRadius: 1, opacity: 0.9 }} />
-              <div style={iosFrameStyles.batteryCap} />
-            </div>
-          </div>
-        </div>
-        <div style={iosFrameStyles.dynamicIsland} />
-        <div style={iosFrameStyles.content}>{children}</div>
-        <div style={{ ...iosFrameStyles.homeIndicator, ...(darkMode ? iosFrameStyles.homeIndicatorDark : {}) }} />
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   共享原语
-   ============================================================ */
-
-/* 极简线性图标集 —— 只用 path，不用 emoji */
-function Ic({ d, size = 20, color = T.ink, sw = 1.8 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
-      {(Array.isArray(d) ? d : [d]).map((p, i) => <path key={i} d={p} />)}
-    </svg>
-  );
-}
-const IC = {
-  back: 'M15 18l-6-6 6-6',
-  chevron: 'M9 6l6 6-6 6',
-  copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'],
-  plus: ['M12 5v14', 'M5 12h14'],
-  check: 'M5 12l5 5 9-10',
-  doc: ['M7 3h8l4 4v14H7z', 'M15 3v4h4'],
-  key: ['M14 10a4 4 0 10-4 4c.5 0 1-.1 1.4-.3L13 15h2v2h2v2h3v-3.6l-5.7-5.7c.2-.4.3-.9.3-1.4z'],
-  warn: ['M12 3l10 18H2z', 'M12 10v5', 'M12 18.5v.01'],
-  clock: ['M12 21a9 9 0 100-18 9 9 0 000 18z', 'M12 7v5l3 3'],
-  link: ['M10 14a5 5 0 007.1 0l3-3a5 5 0 00-7.1-7.1l-1.5 1.5', 'M14 10a5 5 0 00-7.1 0l-3 3a5 5 0 007.1 7.1l1.5-1.5'],
-  shield: ['M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z', 'M9 12l2 2 4-4'],
-  api: ['M8 9l-4 3 4 3', 'M16 9l4 3-4 3', 'M13 6l-2 12'],
-  trade: ['M7 16V8', 'M7 8l-3 3', 'M7 8l3 3', 'M17 8v8', 'M17 16l-3-3', 'M17 16l3-3'],
-  fund: ['M12 3v18', 'M17 7H9.5a2.5 2.5 0 000 5h5a2.5 2.5 0 010 5H6'],
-  stock: ['M3 17l5-5 4 4 8-8', 'M15 8h5v5'],
-  account: ['M12 12a4 4 0 100-8 4 4 0 000 8z', 'M4 21c0-4 3.6-6 8-6s8 2 8 6'],
+const SERVICE_STATUS = {
+  active:    { text: '已开通', color: 'green' },
+  paused:    { text: '已暂停', color: 'orange' },
+  cancelled: { text: '已注销', color: 'default' }
 };
 
-/* 顶部导航（跟随 APP 现有样式：返回 + 居中标题） */
-function NavBar({ title, right }) {
-  return (
-    <div style={{
-      height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 16px', position: 'sticky', top: 0, zIndex: 5, background: T.canvas,
-    }}>
-      <Ic d={IC.back} size={22} color={T.ink} />
-      <div style={{ fontSize: 17, fontWeight: 600, color: T.ink, position: 'absolute', left: 0, right: 0, textAlign: 'center', pointerEvents: 'none' }}>{title}</div>
-      <div style={{ minWidth: 22, display: 'flex', justifyContent: 'flex-end' }}>{right || null}</div>
-    </div>
-  );
+function nowText() {
+  return dayjs().format('YYYY-MM-DD HH:mm:ss');
 }
 
-/* 按钮：pill 几何是规范的硬要求 */
-function Btn({ children, kind = 'primary', block = true, onClick }) {
-  const skin = {
-    primary:   { background: T.primary, color: '#fff' },
-    secondary: { background: T.cardSoft, color: T.ink },
-    disabled:  { background: '#2c313a', color: T.muted },
-    danger:    { background: T.down, color: '#fff' },
-  }[kind];
-  return (
-    <div onClick={onClick} style={{
-      height: 48, borderRadius: 100, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: 16, fontWeight: 600, width: block ? '100%' : 'auto', padding: '0 24px',
-      cursor: 'pointer', ...skin,
-    }}>{children}</div>
-  );
+function maskKey(prefix, tail) {
+  return 'yk_live_' + prefix + '••••' + tail;
 }
 
-/* 卡片容器 */
-function Card({ children, style }) {
-  return (
-    <div style={{ background: T.card, borderRadius: 16, padding: 16, ...style }}>{children}</div>
-  );
-}
+/* ==========================================================================
+   Mock 数据 · 问卷快照构造函数
+   ========================================================================== */
 
-/* 区块标题 */
-function SectionTitle({ children }) {
-  return <div style={{ fontSize: 13, color: T.muted, margin: '20px 4px 8px', fontWeight: 500 }}>{children}</div>;
-}
-
-/* 徽标 pill */
-function Badge({ children, color = T.primary, bg }) {
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 600, color, background: bg || 'rgba(0,82,255,0.14)',
-      borderRadius: 100, padding: '3px 10px', letterSpacing: 0.2, whiteSpace: 'nowrap',
-    }}>{children}</span>
-  );
-}
-
-/* 复制行（mono 字体是规范对数值的硬要求） */
-function CopyRow({ label, value, masked }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: T.muted, marginBottom: 3 }}>{label}</div>
-        <div style={{ fontFamily: T.mono, fontSize: 14, color: T.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
-      </div>
-      <div style={{ marginLeft: 12, opacity: 0.9 }}><Ic d={IC.copy} size={18} color={T.primary} /></div>
-    </div>
-  );
-}
-
-/* 勾选行 */
-function CheckRow({ checked, children }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-      <div style={{
-        width: 20, height: 20, borderRadius: 6, flexShrink: 0, marginTop: 1,
-        border: checked ? 'none' : `1.5px solid ${T.muted}`,
-        background: checked ? T.primary : 'transparent',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        {checked && <Ic d={IC.check} size={13} color="#fff" sw={2.6} />}
-      </div>
-      <div style={{ fontSize: 13, color: T.body, lineHeight: 1.5 }}>{children}</div>
-    </div>
-  );
-}
-
-/* 底部固定操作区 */
-function Footer({ children }) {
-  return (
-    <div style={{
-      position: 'sticky', bottom: 0, padding: '12px 16px 16px',
-      background: `linear-gradient(transparent, ${T.canvas} 30%)`,
-    }}>{children}</div>
-  );
-}
-
-/* 页面滚动容器 */
-function Page({ children }) {
-  return <div style={{ minHeight: '100%', background: T.canvas, color: T.ink, fontFamily: T.font, display: 'flex', flexDirection: 'column' }}>{children}</div>;
-}
-
-/* 单选选项（问卷用） */
-function RadioRow({ selected, children }) {
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
-      background: selected ? 'rgba(0,82,255,0.10)' : T.cardSoft,
-      border: `1px solid ${selected ? T.primary : 'transparent'}`,
-      borderRadius: 12, marginBottom: 8,
-    }}>
-      <div style={{
-        width: 18, height: 18, borderRadius: 100, flexShrink: 0,
-        border: `1.5px solid ${selected ? T.primary : T.muted}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        {selected && <div style={{ width: 9, height: 9, borderRadius: 100, background: T.primary }} />}
-      </div>
-      <div style={{ fontSize: 14, color: T.ink }}>{children}</div>
-    </div>
-  );
-}
-
-/* ============================================================
-   S1 · 全部服务（新增「OpenAPI」分组）
-   ============================================================ */
-function SvcItem({ icon, label, accent }) {
-  return (
-    <div style={{ width: '25%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, padding: '6px 0' }}>
-      <div style={{
-        width: 44, height: 44, borderRadius: 14, background: T.cardSoft,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        border: accent ? `1.5px solid ${T.primary}` : 'none',
-      }}>
-        <Ic d={icon} size={22} color={accent ? T.primary : T.body} />
-      </div>
-      <div style={{ fontSize: 11, color: T.body, textAlign: 'center' }}>{label}</div>
-    </div>
-  );
-}
-
-function ScreenServices() {
-  return (
-    <Page>
-      <NavBar title="全部服务" />
-      <div style={{ padding: '0 16px 24px' }}>
-        <SectionTitle>交易</SectionTitle>
-        <Card style={{ display: 'flex', flexWrap: 'wrap', padding: '12px 8px' }}>
-          <SvcItem icon={IC.trade} label="下单" />
-          <SvcItem icon={IC.doc} label="今日订单" />
-          <SvcItem icon={IC.clock} label="历史订单" />
-          <SvcItem icon={IC.stock} label="融资股票" />
-        </Card>
-
-        {/* 新增分组 —— 本次设计的入口位置 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '20px 4px 8px' }}>
-          <span style={{ fontSize: 13, color: T.muted, fontWeight: 500 }}>OpenAPI</span>
-          <Badge>新增分组</Badge>
-        </div>
-        <Card style={{ display: 'flex', flexWrap: 'wrap', padding: '12px 8px', border: `1px solid ${T.hairline}` }}>
-          <SvcItem icon={IC.api} label="API 交易" accent />
-        </Card>
-
-        <SectionTitle>资金</SectionTitle>
-        <Card style={{ display: 'flex', flexWrap: 'wrap', padding: '12px 8px' }}>
-          <SvcItem icon={IC.fund} label="存入资金" />
-          <SvcItem icon={IC.fund} label="提取资金" />
-          <SvcItem icon={IC.doc} label="资金记录" />
-          <SvcItem icon={IC.account} label="银行账户" />
-        </Card>
-
-        <SectionTitle>账户</SectionTitle>
-        <Card style={{ display: 'flex', flexWrap: 'wrap', padding: '12px 8px' }}>
-          <SvcItem icon={IC.account} label="基本资料" />
-          <SvcItem icon={IC.doc} label="结单" />
-          <SvcItem icon={IC.shield} label="风险测评" />
-          <SvcItem icon={IC.badgePro || IC.shield} label="PI 认证" />
-        </Card>
-      </div>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S2 · 介绍页（符合资格，可申请）
-   ============================================================ */
-function IntroBody() {
-  const features = [
-    { icon: IC.stock, t: '行情查询', d: '实时快照与逐笔，REST + WebSocket' },
-    { icon: IC.trade, t: '下单与撤单', d: '港美股全类型委托，与 APP 同一柜台通道' },
-    { icon: IC.account, t: '账户查询', d: '持仓、资金、订单状态实时可查' },
+// 标准「自动通过」问卷快照（无「其他」、无逻辑命中）
+function makeAutoQuestionnaire() {
+  return [
+    {
+      part: '第一部分 · API 交易与投资经验',
+      items: [
+        { no: '1.1', q: '是否具备 API 交易经验？', a: '有，2 年' },
+        { no: '1.1a', q: '过往使用 API 的日均交易频率？', a: '每日 10–20 笔' },
+        { no: '1.2', q: '是否具备自动化 / 程序化交易经验？', a: '有（趋势跟随、网格策略）' }
+      ]
+    },
+    {
+      part: '第二部分 · 技术能力评估',
+      items: [
+        { no: '2.1', q: '熟悉的编程语言？', a: 'Python、JavaScript' },
+        { no: '2.2', q: '是否具备 REST / WebSocket 接口开发与调试经验？', a: '有，曾独立对接交易所行情与交易接口' }
+      ]
+    },
+    {
+      part: '第三部分 · 投资目标与风险承受能力',
+      items: [
+        { no: '3.1', q: '投资目标？', a: '积极资本增值' },
+        { no: '3.2', q: '风险承受能力？', a: '进取型' },
+        { no: '3.3', q: '是否计划使用杠杆或交易衍生品？', a: '否' }
+      ]
+    },
+    {
+      part: '第四部分 · API 交易算法说明',
+      items: [
+        { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随、网格' },
+        { no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '技术指标信号（均线、动量）' },
+        { no: '4.1.3b', q: '策略描述：持仓周期？', a: '数小时至数日' },
+        { no: '4.1.3c', q: '策略描述：出入场与执行方式？', a: '限价单分批建仓' },
+        { no: '4.2', q: '异常场景应急方案（多选）？', a: '自动熔断暂停、告警通知人工介入' }
+      ]
+    }
   ];
+}
+
+// 审核中客户 1：4.1.3 策略描述信号来源选「其他」（仅因「其他」转人工）
+const QUESTIONNAIRE_REVIEW_1 = [
+  {
+    part: '第一部分 · API 交易与投资经验',
+    items: [
+      { no: '1.1', q: '是否具备 API 交易经验？', a: '有，3 年' },
+      { no: '1.1a', q: '过往使用 API 的日均交易频率？', a: '每日 20–50 笔' },
+      { no: '1.2', q: '是否具备自动化 / 程序化交易经验？', a: '有（统计套利、事件驱动）' }
+    ]
+  },
+  {
+    part: '第二部分 · 技术能力评估',
+    items: [
+      { no: '2.1', q: '熟悉的编程语言？', a: 'Python、Rust' },
+      { no: '2.2', q: '是否具备 REST / WebSocket 接口开发与调试经验？', a: '有，维护过自有量化交易系统' }
+    ]
+  },
+  {
+    part: '第三部分 · 投资目标与风险承受能力',
+    items: [
+      { no: '3.1', q: '投资目标？', a: '积极资本增值' },
+      { no: '3.2', q: '风险承受能力？', a: '进取型' },
+      { no: '3.3', q: '是否计划使用杠杆或交易衍生品？', a: '计划交易衍生品（期权）' }
+    ]
+  },
+  {
+    part: '第四部分 · API 交易算法说明',
+    items: [
+      { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随、其他' },
+      { no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '其他', other: '基于链上资金流与盘口微观结构融合的自定义信号' },
+      { no: '4.1.3b', q: '策略描述：持仓周期？', a: '日内' },
+      { no: '4.1.3c', q: '策略描述：出入场与执行方式？', a: '限价单分批建仓、 iceberg 拆单' },
+      { no: '4.2', q: '异常场景应急方案（多选）？', a: '自动熔断暂停、告警通知人工介入' }
+    ]
+  }
+];
+
+// 审核中客户 2：4.2 应急方案选「其他」，且命中规则 R3（日频 <50 笔却选高频）
+const QUESTIONNAIRE_REVIEW_2 = [
+  {
+    part: '第一部分 · API 交易与投资经验',
+    items: [
+      { no: '1.1', q: '是否具备 API 交易经验？', a: '有，2 年' },
+      { no: '1.1a', q: '过往使用 API 的日均交易频率？', a: '每日 5–10 笔' },
+      { no: '1.2', q: '是否具备自动化 / 程序化交易经验？', a: '有（趋势跟随）' }
+    ]
+  },
+  {
+    part: '第二部分 · 技术能力评估',
+    items: [
+      { no: '2.1', q: '熟悉的编程语言？', a: 'Python、Go' },
+      { no: '2.2', q: '是否具备 REST / WebSocket 接口开发与调试经验？', a: '有' }
+    ]
+  },
+  {
+    part: '第三部分 · 投资目标与风险承受能力',
+    items: [
+      { no: '3.1', q: '投资目标？', a: '积极资本增值' },
+      { no: '3.2', q: '风险承受能力？', a: '进取型' },
+      { no: '3.3', q: '是否计划使用杠杆或交易衍生品？', a: '否' }
+    ]
+  },
+  {
+    part: '第四部分 · API 交易算法说明',
+    items: [
+      { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随、高频交易' },
+      { no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '盘口订单簿失衡信号' },
+      { no: '4.1.3b', q: '策略描述：持仓周期？', a: '秒级至分钟级' },
+      { no: '4.1.3c', q: '策略描述：出入场与执行方式？', a: '市价单快速进出' },
+      { no: '4.2', q: '异常场景应急方案（多选）？', a: '其他', other: '人工值守盯盘，异常时电话通知风控联系人后手动处置' }
+    ]
+  }
+];
+
+// 已审核（人工）客户的问卷快照：4.1.3 选「其他」，经 OA 三级审核通过
+const QUESTIONNAIRE_MANUAL_PASSED = makeAutoQuestionnaire();
+QUESTIONNAIRE_MANUAL_PASSED[3].items[1] = {
+  no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '其他',
+  other: '结合港股通南向资金流与行业轮动模型的多因子信号'
+};
+
+// 已驳回客户的问卷快照：4.2 选「其他」且表述模糊
+const QUESTIONNAIRE_REJECTED = makeAutoQuestionnaire();
+QUESTIONNAIRE_REJECTED[3].items[4] = {
+  no: '4.2', q: '异常场景应急方案（多选）？', a: '其他',
+  other: '到时候看情况处理'
+};
+
+/* ==========================================================================
+   Mock 数据 · 申请记录（8 条，状态全覆盖）
+   ========================================================================== */
+
+const INITIAL_APPLICATIONS = [
+  {
+    id: 'OA-20260825-001', yuId: '83625147', name: '陈昊然',
+    submitTime: '2026-08-25 14:32', status: 'reviewing',
+    manualReason: '4.1.3 策略描述选择「其他」',
+    operator: null, operateTime: null, conclusionNote: null,
+    questionnaire: QUESTIONNAIRE_REVIEW_1
+  },
+  {
+    id: 'OA-20260824-003', yuId: '82190463', name: '周雨桐',
+    submitTime: '2026-08-24 09:18', status: 'reviewing',
+    manualReason: '4.2 应急方案选择「其他」',
+    operator: null, operateTime: null, conclusionNote: null,
+    questionnaire: QUESTIONNAIRE_REVIEW_2
+  },
+  {
+    id: 'OA-20260823-002', yuId: '80142735', name: '李铭轩',
+    submitTime: '2026-08-23 16:47', status: 'approved',
+    manualReason: '4.1.3 策略描述选择「其他」',
+    operator: '王敏', operateTime: '2026-08-24 10:12',
+    conclusionNote: '策略描述经交易部初审与风控部复核，信号来源可解释，可接受。',
+    questionnaire: QUESTIONNAIRE_MANUAL_PASSED
+  },
+  {
+    id: 'OA-20260822-005', yuId: '82938741', name: '黄梓晴',
+    submitTime: '2026-08-22 11:05', status: 'rejected',
+    manualReason: '4.2 应急方案选择「其他」',
+    operator: '王敏', operateTime: '2026-08-23 15:40',
+    conclusionNote: '应急方案表述过于模糊，无法评估极端行情下的处置能力，请补充后重新申请。',
+    questionnaire: QUESTIONNAIRE_REJECTED
+  },
+  {
+    id: 'OA-20260820-001', yuId: '81056238', name: '吴子豪',
+    submitTime: '2026-08-20 10:02', status: 'opened',
+    manualReason: '—（自动审核通过）',
+    operator: '系统', operateTime: '2026-08-20 10:02', conclusionNote: null,
+    questionnaire: makeAutoQuestionnaire()
+  },
+  {
+    id: 'OA-20260819-004', yuId: '82074196', name: '郑晓琳',
+    submitTime: '2026-08-19 15:26', status: 'opened',
+    manualReason: '4.1.3 策略描述选择「其他」',
+    operator: '王敏', operateTime: '2026-08-20 09:31',
+    conclusionNote: '做市策略经风控部审核通过，已同步打标「做市/高频」并通知交易部、风险部、合规部。',
+    questionnaire: QUESTIONNAIRE_MANUAL_PASSED
+  },
+  {
+    id: 'OA-20260818-002', yuId: '84531876', name: '刘俊杰',
+    submitTime: '2026-08-18 13:55', status: 'opened',
+    manualReason: '—（自动审核通过）',
+    operator: '系统', operateTime: '2026-08-18 13:55', conclusionNote: null,
+    questionnaire: makeAutoQuestionnaire()
+  },
+  {
+    id: 'OA-20260817-001', yuId: '80965427', name: '孙梦瑶',
+    submitTime: '2026-08-17 09:40', status: 'opened',
+    manualReason: '—（自动审核通过）',
+    operator: '系统', operateTime: '2026-08-17 09:40', conclusionNote: null,
+    questionnaire: makeAutoQuestionnaire()
+  }
+];
+
+/* ==========================================================================
+   Mock 数据 · 服务客户（4 个，覆盖 已开通 / 已暂停 / 已注销 + 做市高频打标）
+   ========================================================================== */
+
+const INITIAL_CUSTOMERS = [
+  {
+    id: 'C001', yuId: '81056238', name: '吴子豪',
+    serviceStatus: 'active', openTime: '2026-08-20 11:05', cancelTime: null,
+    hft: false, agreementVersion: 'v1.0',
+    ticket: { valid: true, expireTime: '2026-08-30 11:05' },
+    keys: [
+      { id: 'K1', name: '主力策略', apiKey: maskKey('3f8a', '9c2d'), ips: ['203.186.94.17'], createTime: '2026-08-20 11:05', status: 'active' },
+      { id: 'K2', name: '回测联调', apiKey: maskKey('77b2', 'e041'), ips: ['203.186.94.17', '112.118.206.33'], createTime: '2026-08-21 16:20', status: 'paused' }
+    ],
+    logs: [
+      { operator: '系统', time: '2026-08-20 11:05', action: '开通服务', target: '服务', result: '成功' },
+      { operator: '客户自助', time: '2026-08-21 16:20', action: '新建 Key', target: '回测联调', result: '成功' },
+      { operator: '风控值班', time: '2026-08-25 09:32', action: '暂停 Key', target: '回测联调（策略 6 速率维度触发，人工处置）', result: '成功' }
+    ]
+  },
+  {
+    id: 'C002', yuId: '82074196', name: '郑晓琳',
+    serviceStatus: 'active', openTime: '2026-08-20 14:18', cancelTime: null,
+    hft: true, agreementVersion: 'v1.0',
+    ticket: { valid: true, expireTime: '2026-08-29 14:18' },
+    keys: [
+      { id: 'K3', name: '做市-港股-A', apiKey: maskKey('a41c', '5f7e'), ips: ['45.125.34.102', '45.125.34.103', '210.6.128.55'], createTime: '2026-08-20 14:18', status: 'active' },
+      { id: 'K4', name: '做市-港股-B', apiKey: maskKey('b902', '18aa'), ips: ['45.125.34.102'], createTime: '2026-08-20 14:25', status: 'paused' },
+      { id: 'K5', name: '备用观察', apiKey: maskKey('c3d7', '66b0'), ips: ['210.6.128.55'], createTime: '2026-08-22 10:40', status: 'active' }
+    ],
+    logs: [
+      { operator: '系统', time: '2026-08-20 14:18', action: '开通服务', target: '服务', result: '成功' },
+      { operator: '系统', time: '2026-08-20 14:18', action: '做市/高频打标并通知', target: '交易部 / 风险部 / 合规部', result: '成功' },
+      { operator: '王敏', time: '2026-08-22 09:15', action: '暂停 Key', target: '做市-港股-B', result: '成功' }
+    ]
+  },
+  {
+    id: 'C003', yuId: '84531876', name: '刘俊杰',
+    serviceStatus: 'paused', openTime: '2026-08-18 15:42', cancelTime: null,
+    hft: false, agreementVersion: 'v1.0',
+    ticket: { valid: false, expireTime: '2026-08-25 15:42' },
+    keys: [
+      { id: 'K6', name: '网格策略', apiKey: maskKey('d5e1', '2c09'), ips: ['118.163.74.210'], createTime: '2026-08-18 15:42', status: 'active' },
+      { id: 'K7', name: '套利监控', apiKey: maskKey('e8f4', 'a3d6'), ips: ['118.163.74.210'], createTime: '2026-08-19 09:10', status: 'active' }
+    ],
+    logs: [
+      { operator: '系统', time: '2026-08-18 15:42', action: '开通服务', target: '服务', result: '成功' },
+      { operator: '王敏', time: '2026-08-24 17:30', action: '一键终止服务', target: '服务（触发风控策略 6，当日成交总额超开户问卷流动资产上限）', result: '成功' }
+    ]
+  },
+  {
+    id: 'C004', yuId: '80965427', name: '孙梦瑶',
+    serviceStatus: 'cancelled', openTime: '2026-08-17 10:26', cancelTime: '2026-08-23 20:11',
+    hft: false, agreementVersion: 'v1.0',
+    ticket: { valid: false, expireTime: '—（已注销）' },
+    keys: [
+      { id: 'K8', name: '趋势策略', apiKey: maskKey('f1a9', 'd8c3'), ips: ['61.244.105.88'], createTime: '2026-08-17 10:26', status: 'active' }
+    ],
+    logs: [
+      { operator: '系统', time: '2026-08-17 10:26', action: '开通服务', target: '服务', result: '成功' },
+      { operator: '客户自助', time: '2026-08-23 20:11', action: '注销服务', target: '服务（APP 端自助注销）', result: '成功' }
+    ]
+  }
+];
+
+/* ==========================================================================
+   Mock 数据 · 风控触发记录（15 条，覆盖各原因分类与处置结果；只读事实数据，无状态流转）
+   ========================================================================== */
+
+const RISK_CATEGORY_OPTIONS = [
+  { value: 'all', label: '全部原因分类' },
+  { value: 'ip', label: 'IP 白名单' },
+  { value: 'symbol', label: '标的白名单' },
+  { value: 'session', label: '交易时间段' },
+  { value: 'param', label: '参数合法性' },
+  { value: 'strategy', label: '风控策略' }
+];
+
+// 处置结果：触发后的实际后果；color 为 null 时渲染默认灰色 Tag
+const RISK_ACTION = {
+  reject: { text: '已拒单', color: null },
+  block: { text: '阻断 API · 已暂停 Key（人工）', color: 'orange' },
+  kyc: { text: '系统外处置 · 待重新 KYC', color: 'red' },
+  inquiry: { text: '系统外处置 · 待书面问询', color: 'red' }
+};
+
+// action: reject = 已拒单（默认）；block = 风控人工暂停 Key；kyc / inquiry = 系统外处置
+// 注：策略 6 资金维度、策略 10 为成交后评估，不拒单、只告警
+const INITIAL_RISK_RECORDS = [
+  { id: 'RK01', time: '2026-08-25 14:58', yuId: '82074196', name: '郑晓琳', symbol: '03888', symbolName: '金山软件', side: '买入', price: '31.250', qty: '40,000', category: 'strategy', rule: '策略 10：个股成交金额异常', reason: '该股当日成交金额占近 3 个月 ADV 达 12%（阈值 10%）', action: 'inquiry' },
+  { id: 'RK02', time: '2026-08-25 11:42', yuId: '81056238', name: '吴子豪', symbol: '09888', symbolName: '百度集团-SW', side: '买入', price: '102.600', qty: '500', category: 'ip', rule: 'IP 白名单', reason: '请求来源 IP 113.52.88.19 不在该 Key 绑定白名单内', action: 'reject' },
+  { id: 'RK03', time: '2026-08-25 10:15', yuId: '82074196', name: '郑晓琳', symbol: '08172', symbolName: '中国环境资源', side: '买入', price: '0.118', qty: '500,000', category: 'symbol', rule: '标的白名单', reason: '该证券近 3 个月日均成交额未达 500 万 HKD 准入门槛', action: 'reject' },
+  { id: 'RK15', time: '2026-08-25 09:32', yuId: '81056238', name: '吴子豪', symbol: '00700', symbolName: '腾讯控股', side: '买入', price: '388.000', qty: '200', category: 'strategy', rule: '策略 6：算法暴走 / 胖手指（速率维度）', reason: '秒级报撤单频率达 14 笔/秒（阈值 10 笔/秒）', action: 'block' },
+  { id: 'RK04', time: '2026-08-24 16:08', yuId: '84531876', name: '刘俊杰', symbol: '01810', symbolName: '小米集团-W', side: '买入', price: '28.350', qty: '1,000', category: 'session', rule: '交易时间段限制', reason: '港股持续交易时段已结束（16:00 收市），订单当日有效不予接受', action: 'reject' },
+  { id: 'RK05', time: '2026-08-24 14:31', yuId: '82074196', name: '郑晓琳', symbol: '01382', symbolName: '互太纺织', side: '买入', price: '1.860', qty: '100,000', category: 'strategy', rule: '策略 3：薄盘股异常 / 价格冲击', reason: '预计成交将推高价格 4.2%，超过价格冲击阈值', action: 'reject' },
+  { id: 'RK06', time: '2026-08-24 09:47', yuId: '81056238', name: '吴子豪', symbol: '09988', symbolName: '阿里巴巴-SW', side: '买入', price: '118.900', qty: '200', category: 'param', rule: '港股限价盘 24 档', reason: '委托价格偏离按盘价超过 24 个价位', action: 'reject' },
+  { id: 'RK07', time: '2026-08-23 15:22', yuId: '84531876', name: '刘俊杰', symbol: '00941', symbolName: '中国移动', side: '买入', price: '74.500', qty: '3,000', category: 'strategy', rule: '策略 6：算法暴走 / 胖手指（资金维度）', reason: '当日成交总额超过开户问卷流动资产范围上限', action: 'kyc' },
+  { id: 'RK08', time: '2026-08-22 13:05', yuId: '81056238', name: '吴子豪', symbol: '00700', symbolName: '腾讯控股', side: '买入', price: '386.411', qty: '100', category: 'param', rule: '参数合法性校验', reason: '委托价格不符合最小价位表（0.200 档）', action: 'reject' },
+  { id: 'RK09', time: '2026-08-22 10:38', yuId: '82074196', name: '郑晓琳', symbol: '02018', symbolName: '瑞声科技', side: '卖出', price: '42.150', qty: '2,500', category: 'session', rule: '交易时间段限制', reason: '开市竞价时段不支持竞价市价单', action: 'reject' },
+  { id: 'RK10', time: '2026-08-21 15:56', yuId: '84531876', name: '刘俊杰', symbol: '00981', symbolName: '中芯国际', side: '买入', price: '48.700', qty: '10,000', category: 'strategy', rule: '策略 5：消息前异常扫货', reason: '重大事项公告前 30 分钟内集中买入同一标的', action: 'reject' },
+  { id: 'RK11', time: '2026-08-20 12:23', yuId: '80965427', name: '孙梦瑶', symbol: '01211', symbolName: '比亚迪股份', side: '卖出', price: '238.000', qty: '500', category: 'session', rule: '交易时间段限制', reason: '午间休市时段（12:00–13:00）不接受新委托', action: 'reject' },
+  { id: 'RK12', time: '2026-08-20 10:44', yuId: '81056238', name: '吴子豪', symbol: '02382', symbolName: '舜宇光学科技', side: '买入', price: '63.300', qty: '300', category: 'ip', rule: 'IP 白名单', reason: '请求来源 IP 45.77.129.61 不在该 Key 绑定白名单内', action: 'reject' },
+  { id: 'RK13', time: '2026-08-19 14:19', yuId: '82074196', name: '郑晓琳', symbol: '08313', symbolName: '杰地集团', side: '买入', price: '0.066', qty: '800,000', category: 'symbol', rule: '标的白名单', reason: '该证券近 3 个月日均成交额未达 500 万 HKD 准入门槛', action: 'reject' },
+  { id: 'RK14', time: '2026-08-18 11:07', yuId: '81056238', name: '吴子豪', symbol: '00388', symbolName: '香港交易所', side: '卖出', price: '322.800', qty: '153', category: 'param', rule: '参数合法性校验', reason: '委托数量非整手（1 手 = 100 股）', action: 'reject' }
+];
+
+/* ==========================================================================
+   主题 token（对齐 DESIGN-visual.md · Coinbase 风格）
+   ========================================================================== */
+
+const themeConfig = {
+  token: {
+    colorPrimary: COLOR.primary,
+    colorInfo: COLOR.primary,
+    colorLink: COLOR.primary,
+    colorSuccess: COLOR.up,
+    colorError: COLOR.down,
+    colorText: COLOR.ink,
+    colorTextSecondary: COLOR.body,
+    colorTextTertiary: COLOR.muted,
+    colorBorder: COLOR.hairline,
+    colorBorderSecondary: COLOR.hairlineSoft,
+    colorSplit: COLOR.hairline,
+    borderRadius: 12,
+    fontFamily: "Inter, -apple-system, system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+    fontFamilyCode: "'JetBrains Mono', monospace"
+  },
+  components: {
+    Button: { borderRadius: 100, controlHeight: 38, fontWeight: 600 },
+    Card: { borderRadiusLG: 16 },
+    Input: { borderRadius: 12 },
+    Select: { borderRadius: 12 },
+    DatePicker: { borderRadius: 12 },
+    Table: { headerBg: COLOR.surfaceSoft },
+    Layout: { siderBg: COLOR.canvas, headerBg: COLOR.canvas, bodyBg: COLOR.surfaceSoft },
+    Menu: { itemBorderRadius: 8, itemMarginInline: 12 }
+  }
+};
+
+/* ==========================================================================
+   通用小组件
+   ========================================================================== */
+
+function ApplyStatusTag({ status }) {
+  const meta = APPLY_STATUS[status] || { text: status, color: 'default' };
+  const strong = status === 'reviewing';
   return (
-    <div style={{ padding: '0 16px' }}>
-      <div style={{ padding: '20px 4px 4px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Badge>灰度开放中</Badge>
-        <Badge color={T.body} bg={T.cardSoft}>PI 优先</Badge>
-      </div>
-      <div style={{ fontSize: 30, fontWeight: 400, letterSpacing: -0.6, lineHeight: 1.2, padding: '8px 4px 0' }}>
-        用 API 接入<br />你的交易系统
-      </div>
-      <div style={{ fontSize: 14, color: T.body, lineHeight: 1.6, padding: '10px 4px 0' }}>
-        通过你自己的程序、量化脚本或第三方终端，直接完成行情、下单与账户管理。
-      </div>
-
-      <div style={{ marginTop: 20 }}>
-        {features.map((f, i) => (
-          <Card key={i} style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 10 }}>
-            <div style={{ width: 42, height: 42, borderRadius: 12, background: T.cardSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <Ic d={f.icon} size={21} color={T.primary} />
-            </div>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 600 }}>{f.t}</div>
-              <div style={{ fontSize: 12.5, color: T.muted, marginTop: 2 }}>{f.d}</div>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      <SectionTitle>开通条件</SectionTitle>
-      <Card>
-        {[
-          ['已完成 PI 专业投资者认证', true],
-          ['风险测评在有效期内', true],
-          ['已阅读并同意 API 交易风险披露', false],
-        ].map(([t, done], i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
-            <div style={{
-              width: 20, height: 20, borderRadius: 100, flexShrink: 0,
-              background: done ? 'rgba(5,177,105,0.15)' : T.cardSoft,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              {done
-                ? <Ic d={IC.check} size={12} color={T.up} sw={2.6} />
-                : <div style={{ width: 6, height: 6, borderRadius: 100, background: T.muted }} />}
-            </div>
-            <div style={{ fontSize: 14, color: done ? T.ink : T.body }}>{t}</div>
-          </div>
-        ))}
-      </Card>
-
-      <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.6, padding: '14px 4px 0' }}>
-        所有委托由你自主触发，云锋仅作为订单路由通道，不提供、不托管任何自动化交易策略。
-      </div>
-    </div>
+    <Tag color={meta.color} style={strong ? { fontWeight: 600, padding: '2px 12px' } : undefined}>
+      {meta.text}
+    </Tag>
   );
 }
 
-function ScreenIntro() {
-  return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}><IntroBody /></div>
-      <Footer><Btn>立即申请</Btn></Footer>
-    </Page>
-  );
+function ServiceStatusTag({ status }) {
+  const meta = SERVICE_STATUS[status] || { text: status, color: 'default' };
+  return <Tag color={meta.color}>{meta.text}</Tag>;
 }
 
-/* ============================================================
-   S3 · 介绍页（资格不符，拦截态）
-   ============================================================ */
-function ScreenIntroBlocked() {
-  return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}>
-        <IntroBody />
-        <div style={{
-          margin: '16px 16px 0', padding: '12px 14px', borderRadius: 12,
-          background: 'rgba(244,176,0,0.10)', display: 'flex', gap: 10, alignItems: 'flex-start',
-        }}>
-          <Ic d={IC.warn} size={18} color={T.yellow} />
-          <div style={{ fontSize: 13, color: T.body, lineHeight: 1.5 }}>
-            当前账户暂未满足开通条件：需先完成 <span style={{ color: T.ink }}>PI 专业投资者认证</span>。
-            <span style={{ color: T.primary }}> 前往认证 ›</span>
-          </div>
-        </div>
-      </div>
-      <Footer><Btn kind="disabled">立即申请</Btn></Footer>
-    </Page>
-  );
+function KeyStatusTag({ keyStatus, serviceStatus }) {
+  if (serviceStatus === 'cancelled') return <Tag>已失效</Tag>;
+  if (serviceStatus === 'paused') return <Tag>已暂停</Tag>;
+  return keyStatus === 'active'
+    ? <Tag color="green">正常</Tag>
+    : <Tag>已暂停</Tag>;
 }
 
-/* ============================================================
-   S4 · 协议签署（H5 容器示意）
-   ============================================================ */
-function ScreenAgreement() {
-  return (
-    <Page>
-      <NavBar title="签署协议" right={<span style={{ fontSize: 12, color: T.muted }}>1 / 3</span>} />
-      <div style={{ flex: 1, padding: '0 16px' }}>
-        <div style={{ fontSize: 12, color: T.muted, margin: '4px 4px 10px' }}>H5 容器 · 协议正文由法务内容渲染</div>
-        <Card>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>交易适当性补充协议</div>
-          <div style={{ fontSize: 11, color: T.muted, marginBottom: 12 }}>版本 v1.0 · 2026-09 生效</div>
-          {[
-            '一、服务性质：本服务仅为您自主发起的交易指令提供路由通道……',
-            '二、适当性评估：您确认已如实填写调查问卷，并承诺信息变更时及时更新……',
-            '三、责任边界：因您的程序、网络或设备原因导致的损失由您自行承担……',
-            '四、服务中止：当触发风险控制规则时，我们有权暂停或终止您的 API 权限……',
-          ].map((t, i) => (
-            <div key={i} style={{ fontSize: 13, color: T.body, lineHeight: 1.7, marginBottom: 8 }}>{t}</div>
-          ))}
-          <div style={{ fontSize: 13, color: T.primary, padding: '6px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Ic d={IC.doc} size={15} color={T.primary} /> 附：《API 交易風險披露聲明》全文
-          </div>
-          <div style={{ height: 1, background: T.hairline, margin: '10px 0' }} />
-          <div style={{ fontSize: 12, color: T.muted, textAlign: 'center' }}>— 已阅读至底部 —</div>
-        </Card>
-        <div style={{ marginTop: 16 }}><CheckRow checked>我已阅读并同意《交易适当性补充协议》及《API 交易风险披露声明》</CheckRow></div>
-        <div style={{ fontSize: 12, color: T.muted, marginTop: 10, paddingLeft: 4 }}>点击签署将验证交易密码，并记录签署时间、协议版本与设备信息。</div>
-      </div>
-      <Footer><Btn>签署并继续</Btn></Footer>
-    </Page>
-  );
+function HftTag() {
+  return <Tag color="volcano" style={{ fontWeight: 600 }}>做市/高频</Tag>;
 }
 
-/* ============================================================
-   S5 · 问卷（H5 容器示意）
-   ============================================================ */
-function ScreenSurvey() {
+function SectionCard({ title, extra, children, style }) {
   return (
-    <Page>
-      <NavBar title="开通调查问卷" right={<span style={{ fontSize: 12, color: T.muted }}>2 / 3</span>} />
-      <div style={{ flex: 1, padding: '0 16px' }}>
-        <div style={{ fontSize: 12, color: T.muted, margin: '4px 4px 10px' }}>H5 容器 · 题目与选项由问卷侧控制</div>
-        {/* 进度 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-          <div style={{ flex: 1, height: 4, borderRadius: 100, background: T.cardSoft }}>
-            <div style={{ width: '33%', height: '100%', borderRadius: 100, background: T.primary }} />
-          </div>
-          <span style={{ fontSize: 12, color: T.muted, fontFamily: T.mono }}>2 / 6</span>
-        </div>
-        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>API 与算法交易经验</div>
-        <div style={{ fontSize: 12.5, color: T.muted, marginBottom: 16 }}>请如实填写，将用于适当性评估</div>
-
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>1. 您使用 API / 程序化交易的经验年限？</div>
-        <RadioRow>没有经验</RadioRow>
-        <RadioRow selected>1 – 3 年</RadioRow>
-        <RadioRow>3 年以上</RadioRow>
-
-        <div style={{ fontSize: 14, fontWeight: 600, margin: '18px 0 10px' }}>2. 您的策略是否包含风控机制？</div>
-        <RadioRow selected>是，包含止损 / 限额等机制</RadioRow>
-        <RadioRow>否</RadioRow>
-      </div>
-      <Footer><Btn>下一页</Btn></Footer>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S6 · IP 白名单（原生）
-   ============================================================ */
-function ScreenIpWhitelist() {
-  return (
-    <Page>
-      <NavBar title="绑定 IP 白名单" right={<span style={{ fontSize: 12, color: T.muted }}>3 / 3</span>} />
-      <div style={{ flex: 1, padding: '0 16px' }}>
-        <div style={{ fontSize: 13, color: T.body, lineHeight: 1.6, margin: '8px 4px 18px' }}>
-          API 请求仅允许来自白名单 IP。该 IP 将绑定你的首个 API Key，开通后可在管理页修改。
-        </div>
-        <div style={{ fontSize: 13, color: T.muted, margin: '0 4px 8px' }}>IP 地址 1（必填）</div>
-        <div style={{
-          background: T.card, borderRadius: 12, padding: '14px 16px',
-          border: `1.5px solid ${T.primary}`, fontFamily: T.mono, fontSize: 16, color: T.ink,
-        }}>203.0.113.24</div>
-        <div style={{
-          marginTop: 12, borderRadius: 12, padding: '13px 16px', border: `1px dashed ${T.hairline}`,
-          display: 'flex', alignItems: 'center', gap: 8, color: T.primary, fontSize: 14, fontWeight: 500,
-        }}>
-          <Ic d={IC.plus} size={16} color={T.primary} /> 添加 IP（最多 3 个）
-        </div>
-        <div style={{
-          marginTop: 18, padding: '12px 14px', borderRadius: 12, background: T.card,
-          display: 'flex', gap: 10, alignItems: 'flex-start',
-        }}>
-          <Ic d={IC.shield} size={17} color={T.primary} />
-          <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
-            支持 IPv4 / IPv6。家庭宽带等动态 IP 场景下，IP 变化将导致 API 请求被拒绝。
-          </div>
-        </div>
-      </div>
-      <Footer><Btn>下一步</Btn></Footer>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S7 · 确认提交（半屏汇总）
-   ============================================================ */
-function ScreenConfirm() {
-  const rows = [
-    ['签署协议', '补充协议 v1.0 · 风险披露声明 v1.0'],
-    ['调查问卷', '已提交 · 适当性评估通过'],
-    ['白名单 IP', '203.0.113.24'],
-  ];
-  return (
-    <Page>
-      <NavBar title="确认开通信息" />
-      <div style={{ flex: 1, padding: '0 16px' }}>
-        <Card style={{ marginTop: 8 }}>
-          {rows.map(([k, v], i) => (
-            <div key={i} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
-              padding: '13px 0', borderBottom: i < rows.length - 1 ? `1px solid ${T.hairline}` : 'none',
-            }}>
-              <span style={{ fontSize: 14, color: T.muted, flexShrink: 0 }}>{k}</span>
-              <span style={{ fontSize: 13.5, color: T.ink, textAlign: 'right' }}>{v}</span>
-            </div>
-          ))}
-        </Card>
-        <div style={{
-          marginTop: 16, padding: '12px 14px', borderRadius: 12, background: 'rgba(0,82,255,0.10)',
-          display: 'flex', gap: 10, alignItems: 'flex-start',
-        }}>
-          <Ic d={IC.check} size={17} color={T.primary} />
-          <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.6 }}>
-            提交后系统将进行自动审核，通常数秒内完成。审核通过后立即生成你的首个 API Key。
-          </div>
-        </div>
-      </div>
-      <Footer><Btn>确认开通</Btn></Footer>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S8 · 开通成功（Secret 唯一一次明文展示）
-   ============================================================ */
-function ScreenSuccess() {
-  return (
-    <Page>
-      <div style={{ flex: 1, padding: '0 16px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '36px 0 20px' }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: 100, background: 'rgba(5,177,105,0.14)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Ic d={IC.check} size={30} color={T.up} sw={2.4} />
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 600, marginTop: 16 }}>API 交易已开通</div>
-          <div style={{ fontSize: 13, color: T.muted, marginTop: 6 }}>你的首个 API Key 已生成</div>
-        </div>
-
-        <Card>
-          <CopyRow label="API Key" value="ak_live_9f3KmQ7xT2wLpR8n" />
-          <div style={{ height: 1, background: T.hairline }} />
-          <CopyRow label="API Secret" value="sk_demo_X7vB2nQ9mK4wT8pL3rY6sD1f" />
-          <div style={{ height: 1, background: T.hairline }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
-            <span style={{ fontSize: 12, color: T.muted }}>绑定 IP</span>
-            <span style={{ fontFamily: T.mono, fontSize: 14, color: T.ink }}>203.0.113.24</span>
-          </div>
-        </Card>
-
-        <div style={{
-          marginTop: 14, padding: '12px 14px', borderRadius: 12,
-          background: 'rgba(207,32,47,0.10)', display: 'flex', gap: 10, alignItems: 'flex-start',
-        }}>
-          <Ic d={IC.warn} size={17} color={T.down} />
-          <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.6 }}>
-            <span style={{ color: T.ink, fontWeight: 600 }}>API Secret 仅此一次明文展示。</span>
-            离开本页后将无法再次查看，请立即妥善保存。如遗失，只能删除后重建 Key。
-          </div>
-        </div>
-
-        <div style={{ marginTop: 18 }}><CheckRow checked>我已妥善保存 API Secret</CheckRow></div>
-        <div style={{ fontSize: 13, color: T.primary, marginTop: 14, paddingLeft: 4 }}>查看接入文档 ›</div>
-      </div>
-      <Footer><Btn>完成</Btn></Footer>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S9–S10 · 管理页（ticket 有效 / 已过期）
-   ============================================================ */
-function KeyCard({ name, keyStr, ip, created, dimmed }) {
-  return (
-    <Card style={{ marginBottom: 10, opacity: dimmed ? 0.45 : 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Ic d={IC.key} size={16} color={T.primary} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>{name}</span>
-        </div>
-        {!dimmed && <span style={{ fontSize: 13, color: T.down }}>删除</span>}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-        <span style={{ fontFamily: T.mono, fontSize: 13.5, color: T.body }}>{keyStr}</span>
-        {!dimmed && <Ic d={IC.copy} size={16} color={T.primary} />}
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: 12, color: T.muted }}>
-        <span>IP {ip}</span>
-        <span>创建于 {created}</span>
-      </div>
+    <Card
+      title={<span style={{ fontSize: 16, fontWeight: 600 }}>{title}</span>}
+      extra={extra}
+      style={{ marginBottom: 24, border: '1px solid ' + COLOR.hairline, boxShadow: 'none', ...(style || {}) }}
+      styles={{ header: { borderBottom: '1px solid ' + COLOR.hairlineSoft }, body: { padding: 24 } }}
+    >
+      {children}
     </Card>
   );
 }
 
-function MgmtBody({ ticket }) {
-  /* ticket: 'ok' | 'expired' | 'suspended' */
-  return (
-    <div style={{ padding: '0 16px 24px' }}>
-      {/* ticket 状态卡 */}
-      {ticket === 'ok' && (
-        <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 12, color: T.muted, marginBottom: 4 }}>交易会话（ticket）</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <div style={{ width: 8, height: 8, borderRadius: 100, background: T.up }} />
-              <span style={{ fontSize: 15, fontWeight: 600 }}>有效</span>
-            </div>
-            <div style={{ fontSize: 12, color: T.muted, marginTop: 4, fontFamily: T.mono }}>至 2026-08-31 14:00</div>
-          </div>
-          <Ic d={IC.shield} size={26} color={T.up} />
-        </Card>
-      )}
-      {ticket === 'expired' && (
-        <Card style={{ background: 'rgba(244,176,0,0.08)', border: `1px solid rgba(244,176,0,0.35)` }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: 12, color: T.muted, marginBottom: 4 }}>交易会话（ticket）</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 100, background: T.yellow }} />
-                <span style={{ fontSize: 15, fontWeight: 600 }}>已过期</span>
-              </div>
-              <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>过期后 API 下单将被拒绝</div>
-            </div>
-            <div style={{
-              height: 36, padding: '0 18px', borderRadius: 100, background: T.primary,
-              display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600,
-            }}>去续期</div>
-          </div>
-        </Card>
-      )}
+/* ==========================================================================
+   登录页
+   ========================================================================== */
 
-      <SectionTitle>API Key</SectionTitle>
-      <KeyCard name="主力策略" keyStr="ak_live_9f3K •••• R8n" ip="203.0.113.24" created="2026-08-24" dimmed={ticket === 'suspended'} />
-      <KeyCard name="SignalPlus 终端" keyStr="ak_live_B21q •••• m2X" ip="198.51.100.7" created="2026-08-26" dimmed={ticket === 'suspended'} />
-      {ticket !== 'suspended' && (
-        <div style={{
-          borderRadius: 14, padding: '14px', border: `1px dashed ${T.hairline}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          color: T.primary, fontSize: 14, fontWeight: 600,
-        }}>
-          <Ic d={IC.plus} size={16} color={T.primary} /> 新建 API Key
+function LoginPage({ onLogin }) {
+  const [account, setAccount] = useState('');
+  const [password, setPassword] = useState('');
+
+  const submit = () => {
+    onLogin(account.trim() || 'admin');
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: COLOR.surfaceSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div className="login-card-shadow" style={{ width: 400, background: COLOR.canvas, borderRadius: 24, border: '1px solid ' + COLOR.hairline, padding: '48px 40px' }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, borderRadius: 9999, background: COLOR.primary, color: '#fff', marginBottom: 16 }}>
+            {React.createElement(ApiOutlined, { style: { fontSize: 22 } })}
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 600, color: COLOR.ink, letterSpacing: -0.4 }}>云锋有鱼 OpenAPI 管理后台</div>
+          <div style={{ fontSize: 13, color: COLOR.muted, marginTop: 6 }}>内部运营工具 · 申请管理 / 服务管理</div>
         </div>
-      )}
-
-      <SectionTitle>服务信息</SectionTitle>
-      <Card style={{ padding: '4px 16px' }}>
-        {['接入文档', '下单限制说明', '标的白名单说明', '常见问题'].map((t, i, arr) => (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '13px 0', borderBottom: i < arr.length - 1 ? `1px solid ${T.hairline}` : 'none',
-          }}>
-            <span style={{ fontSize: 14 }}>{t}</span>
-            <Ic d={IC.chevron} size={16} color={T.muted} />
-          </div>
-        ))}
-      </Card>
-
-      {ticket !== 'suspended' && (
-        <div style={{ textAlign: 'center', padding: '26px 0 8px', fontSize: 13, color: T.muted }}>
-          注销 API 交易服务
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Input
+            size="large"
+            prefix={React.createElement(UserOutlined, { style: { color: COLOR.muted } })}
+            placeholder="账号"
+            value={account}
+            onChange={e => setAccount(e.target.value)}
+          />
+          <Input.Password
+            size="large"
+            placeholder="密码"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onPressEnter={submit}
+          />
+          <Button type="primary" size="large" block icon={React.createElement(LoginOutlined)} onClick={submit}>
+            登录
+          </Button>
+        </Space>
+        <div style={{ marginTop: 24, fontSize: 12, color: COLOR.muted, textAlign: 'center', lineHeight: 1.6 }}>
+          Demo 环境：任意账号密码均可登录<br />
+          登录后可在右上角切换「管理员 / 只读」角色体验权限差异
         </div>
-      )}
-    </div>
-  );
-}
-
-function ScreenMgmt() {
-  return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}><MgmtBody ticket="ok" /></div>
-    </Page>
-  );
-}
-
-function ScreenMgmtExpired() {
-  return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}><MgmtBody ticket="expired" /></div>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S11 · 新建 Key 成功
-   ============================================================ */
-function ScreenNewKey() {
-  return (
-    <Page>
-      <div style={{ flex: 1, padding: '0 16px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '36px 0 20px' }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: 100, background: 'rgba(0,82,255,0.12)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Ic d={IC.key} size={28} color={T.primary} />
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 600, marginTop: 16 }}>API Key 已创建</div>
-          <div style={{ fontSize: 13, color: T.muted, marginTop: 6 }}>回测环境 · 绑定 IP 198.51.100.7</div>
-        </div>
-        <Card>
-          <CopyRow label="API Key" value="ak_live_B21qZx5cV8nM0aS4d" />
-          <div style={{ height: 1, background: T.hairline }} />
-          <CopyRow label="API Secret" value="sk_demo_P9wE2rT5yU8iO1pA4sD7fG" />
-        </Card>
-        <div style={{
-          marginTop: 14, padding: '12px 14px', borderRadius: 12,
-          background: 'rgba(207,32,47,0.10)', display: 'flex', gap: 10, alignItems: 'flex-start',
-        }}>
-          <Ic d={IC.warn} size={17} color={T.down} />
-          <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.6 }}>
-            API Secret 仅此一次明文展示，离开本页后无法再次查看。
-          </div>
-        </div>
-        <div style={{ marginTop: 18 }}><CheckRow checked>我已妥善保存 API Secret</CheckRow></div>
-      </div>
-      <Footer><Btn>完成</Btn></Footer>
-    </Page>
-  );
-}
-
-/* ============================================================
-   S12 / S13 · 弹窗：删除 Key / 注销服务（底部半屏，含背景压暗）
-   ============================================================ */
-function Sheet({ title, children, actions }) {
-  return (
-    <div style={{ position: 'absolute', inset: 0, zIndex: 10, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)' }} />
-      <div style={{
-        position: 'relative', background: T.card, borderRadius: '24px 24px 0 0',
-        padding: '24px 20px 28px',
-      }}>
-        <div style={{ width: 36, height: 4, borderRadius: 100, background: T.hairline, margin: '-8px auto 18px' }} />
-        <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 12 }}>{title}</div>
-        {children}
-        <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>{actions}</div>
       </div>
     </div>
   );
 }
 
-function ScreenDeleteKey() {
+/* ==========================================================================
+   申请管理 · 列表
+   ========================================================================== */
+
+function ApplyListPage({ applications, onOpenDetail }) {
+  const [status, setStatus] = useState('all');
+  const [yuId, setYuId] = useState('');
+  const [range, setRange] = useState(null);
+
+  const filtered = useMemo(() => {
+    return applications
+      .filter(app => {
+        if (status !== 'all' && app.status !== status) return false;
+        if (yuId && !app.yuId.includes(yuId.trim())) return false;
+        if (range && range[0] && range[1]) {
+          const t = dayjs(app.submitTime).valueOf();
+          if (t < range[0].startOf('day').valueOf() || t > range[1].endOf('day').valueOf()) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => (a.submitTime < b.submitTime ? 1 : -1));
+  }, [applications, status, yuId, range]);
+
+  const columns = [
+    { title: '有鱼ID', dataIndex: 'yuId', width: 120, render: v => <span className="mono">{v}</span> },
+    { title: '姓名', dataIndex: 'name', width: 100 },
+    { title: '申请时间', dataIndex: 'submitTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
+    { title: '当前状态', dataIndex: 'status', width: 110, render: v => <ApplyStatusTag status={v} /> },
+    { title: '触发人工原因', dataIndex: 'manualReason', render: (v, r) => (
+        r.status === 'reviewing'
+          ? <Text style={{ color: COLOR.warn }}>{v}</Text>
+          : <Text style={{ color: COLOR.body }}>{v}</Text>
+      )
+    },
+    { title: '录入人 / 时间', width: 180, render: (_, r) => (
+        r.operator
+          ? <span>{r.operator} <span className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{r.operateTime}</span></span>
+          : <Text style={{ color: COLOR.muted }}>—</Text>
+      )
+    },
+    { title: '操作', width: 80, align: 'center', render: (_, r) => (
+        <Button type="link" size="small" onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>详情</Button>
+      )
+    }
+  ];
+
   return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}><MgmtBody ticket="ok" /></div>
-      <Sheet
-        title="删除「主力策略」？"
-        actions={<>
-          <div style={{ flex: 1 }}><Btn kind="secondary">取消</Btn></div>
-          <div style={{ flex: 1 }}><Btn kind="danger">验证密码并删除</Btn></div>
-        </>}
-      >
-        <div style={{ fontSize: 13.5, color: T.body, lineHeight: 1.7 }}>
-          删除后该 API Key <span style={{ color: T.ink, fontWeight: 600 }}>立即失效且不可恢复</span>，
-          使用该 Key 的程序将无法再调用行情与交易接口。此操作需验证交易密码。
-        </div>
-      </Sheet>
-    </Page>
+    <SectionCard title="申请管理" extra={<Text style={{ color: COLOR.muted, fontSize: 13 }}>共 {filtered.length} 条申请</Text>}>
+      <Space size={12} wrap style={{ marginBottom: 20 }}>
+        <Select
+          value={status}
+          onChange={setStatus}
+          style={{ width: 140 }}
+          options={[
+            { value: 'all', label: '全部状态' },
+            { value: 'reviewing', label: '审核中' },
+            { value: 'approved', label: '已审核' },
+            { value: 'rejected', label: '已驳回' },
+            { value: 'opened', label: '已开通' }
+          ]}
+        />
+        <Input.Search
+          placeholder="搜索有鱼ID"
+          allowClear
+          style={{ width: 220 }}
+          value={yuId}
+          onChange={e => setYuId(e.target.value)}
+        />
+        <RangePicker value={range} onChange={setRange} placeholder={['提交开始', '提交结束']} />
+      </Space>
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={filtered}
+        pagination={{ pageSize: 10, hideOnSinglePage: true }}
+        onRow={record => ({ className: 'row-clickable', onClick: () => onOpenDetail(record.id) })}
+        locale={{ emptyText: <Empty description="暂无符合条件的申请" /> }}
+      />
+    </SectionCard>
   );
 }
 
-function ScreenDeactivate() {
-  return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}><MgmtBody ticket="ok" /></div>
-      <Sheet
-        title="注销 API 交易服务？"
-        actions={<>
-          <div style={{ flex: 1 }}><Btn kind="secondary">取消</Btn></div>
-          <div style={{ flex: 1 }}><Btn kind="danger">确认注销</Btn></div>
-        </>}
-      >
-        <div style={{ fontSize: 13.5, color: T.body, lineHeight: 1.7, marginBottom: 14 }}>
-          注销后<span style={{ color: T.ink, fontWeight: 600 }}>全部 API Key 立即失效</span>，
-          再次使用需重新完成申请流程。此操作需验证交易密码。
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: T.muted }}>
-          <Ic d={IC.check} size={14} color={T.up} sw={2.6} /> 前置校验已通过：当前无在途订单
-        </div>
-      </Sheet>
-    </Page>
-  );
-}
+/* ==========================================================================
+   申请管理 · 详情
+   ========================================================================== */
 
-/* ============================================================
-   S14 · 服务被暂停（风控一键终止后）
-   ============================================================ */
-function ScreenSuspended() {
-  return (
-    <Page>
-      <NavBar title="API 交易" />
-      <div style={{ flex: 1 }}>
-        <div style={{
-          margin: '4px 16px 16px', padding: '12px 14px', borderRadius: 12,
-          background: 'rgba(207,32,47,0.10)', border: '1px solid rgba(207,32,47,0.35)',
-          display: 'flex', gap: 10, alignItems: 'flex-start',
-        }}>
-          <Ic d={IC.warn} size={18} color={T.down} />
-          <div style={{ fontSize: 13, color: T.body, lineHeight: 1.6 }}>
-            <span style={{ color: T.ink, fontWeight: 600 }}>服务已被暂停。</span>
-            因触发交易风控规则，你的 API 权限已被回收。如有疑问请
-            <span style={{ color: T.primary }}> 联系客服 ›</span>
-          </div>
-        </div>
-        <MgmtBody ticket="suspended" />
-      </div>
-    </Page>
-  );
-}
-
-/* ============================================================
-   Overview 平铺
-   ============================================================ */
-const ovStyles = {
-  header: { maxWidth: 1320, margin: '0 auto', padding: '64px 40px 8px' },
-  group: { maxWidth: 1320, margin: '0 auto', padding: '40px 40px 8px' },
-  grid: { display: 'flex', gap: 36, flexWrap: 'wrap', alignItems: 'flex-start', paddingTop: 24 },
-  label: { fontSize: 13, color: '#5b616e', marginBottom: 10, fontStyle: 'italic', fontFamily: T.font },
-  num: { fontFamily: T.mono, color: T.primary, fontStyle: 'normal', marginRight: 8 },
-};
-
-function Group({ title, desc, children }) {
-  return (
-    <div style={ovStyles.group}>
-      <div style={{ fontSize: 24, fontWeight: 400, letterSpacing: -0.4 }}>{title}</div>
-      {desc && <div style={{ fontSize: 14, color: '#5b616e', marginTop: 8, maxWidth: 720, lineHeight: 1.6 }}>{desc}</div>}
-      <div style={ovStyles.grid}>{children}</div>
-    </div>
-  );
-}
-
-function Shot({ n, label, children }) {
+function QuestionnaireSnapshot({ data }) {
   return (
     <div>
-      <div style={ovStyles.label}><span style={ovStyles.num}>{n}</span>{label}</div>
-      <IosFrame darkMode time="9:41" battery={85}>{children}</IosFrame>
-    </div>
-  );
-}
-
-function App() {
-  return (
-    <div style={{ paddingBottom: 96 }}>
-      <div style={ovStyles.header}>
-        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 2, color: T.primary, textTransform: 'uppercase' }}>
-          云锋有鱼 · OpenAPI · 设计评审原型
+      {data.map((section, si) => (
+        <div key={si} style={{ marginBottom: si < data.length - 1 ? 24 : 0 }}>
+          <Text strong style={{ fontSize: 14, color: COLOR.ink }}>{section.part}</Text>
+          <div style={{ marginTop: 10, border: '1px solid ' + COLOR.hairlineSoft, borderRadius: 12, overflow: 'hidden' }}>
+            {section.items.map((item, ii) => (
+              <div key={ii} style={{ display: 'flex', padding: '12px 16px', borderTop: ii === 0 ? 'none' : '1px solid ' + COLOR.hairlineSoft, background: item.other ? 'rgba(207,32,47,0.03)' : COLOR.canvas }}>
+                <div style={{ flex: 1, paddingRight: 24 }}>
+                  <span className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{item.no}</span>
+                  <div style={{ color: COLOR.body, fontSize: 14 }}>{item.q}</div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Space size={8} align="start">
+                    {item.other && <Tag color="red" style={{ marginTop: 1 }}>「其他」</Tag>}
+                    <Text style={{ color: item.other ? COLOR.down : COLOR.ink, fontWeight: item.other ? 600 : 400 }}>{item.a}</Text>
+                  </Space>
+                  {item.other && <div className="qa-other-fill">客户填空：{item.other}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <h1 style={{ fontSize: 52, fontWeight: 400, letterSpacing: -1.3, lineHeight: 1.05, marginTop: 14 }}>
-          APP 内 OpenAPI<br />申请与管理
-        </h1>
-        <p style={{ fontSize: 15, color: '#5b616e', marginTop: 16, maxWidth: 680, lineHeight: 1.7 }}>
-          依据设计文档 docs/superpowers/specs/2026-08-24-app-openapi-apply-design.md，
-          视觉遵循 DESIGN-visual.md（Coinbase 体系，深色映射）。
-          深色主题贴合现有 APP；#0052ff 为唯一 action 色；CTA 一律 pill 几何；数值一律等宽字体。
-          共 14 屏：入口 ×1 · 申请流 ×6 · 成功页 ×1 · 管理页 ×3 · 弹窗 ×2 · 异常态 ×1。
-        </p>
-      </div>
-
-      <Group title="① 入口" desc="「全部服务」页新增独立分组「OpenAPI」，单入口「API 交易」。所有用户可见，点击进入状态驱动的主页。">
-        <Shot n="01" label="全部服务 · 新增 OpenAPI 分组"><ScreenServices /></Shot>
-      </Group>
-
-      <Group title="② 申请流" desc="线性六步：资格预检 → 协议签署（H5）→ 问卷（H5）→ IP 白名单（原生）→ 确认提交 → 自动审核。资格不符时申请按钮置灰并给出原因与跳转。">
-        <Shot n="02" label="介绍页 · 可申请"><ScreenIntro /></Shot>
-        <Shot n="03" label="介绍页 · 资格不符（置灰 + 原因）"><ScreenIntroBlocked /></Shot>
-        <Shot n="04" label="协议签署（H5 容器）"><ScreenAgreement /></Shot>
-        <Shot n="05" label="调查问卷（H5 容器）"><ScreenSurvey /></Shot>
-        <Shot n="06" label="IP 白名单（原生）"><ScreenIpWhitelist /></Shot>
-        <Shot n="07" label="确认提交（汇总）"><ScreenConfirm /></Shot>
-      </Group>
-
-      <Group title="③ 开通成功" desc="首个 Key + Secret 全屏展示。Secret 仅此一次明文，强制勾选「已保存」才能离开——本原型最关键的安全节点。">
-        <Shot n="08" label="开通成功 · Secret 一次性展示"><ScreenSuccess /></Shot>
-      </Group>
-
-      <Group title="④ 管理页（已开通主页）" desc="四区块：ticket 状态卡 / Key 列表 / 服务信息 / 注销入口。ticket 过期时状态卡变色并给续期入口；新建 Key 成功后同样走 Secret 一次性展示。">
-        <Shot n="09" label="管理页 · ticket 有效"><ScreenMgmt /></Shot>
-        <Shot n="10" label="管理页 · ticket 已过期（可续期）"><ScreenMgmtExpired /></Shot>
-        <Shot n="11" label="新建 Key 成功"><ScreenNewKey /></Shot>
-      </Group>
-
-      <Group title="⑤ 弹窗与异常态" desc="删除 Key 与注销服务均为底部半屏确认 + 交易密码验证；风控一键终止后进入「服务已被暂停」态，Key 全部置灰。">
-        <Shot n="12" label="弹窗 · 删除 Key"><ScreenDeleteKey /></Shot>
-        <Shot n="13" label="弹窗 · 注销服务"><ScreenDeactivate /></Shot>
-        <Shot n="14" label="异常态 · 服务被暂停"><ScreenSuspended /></Shot>
-      </Group>
-
-      <div style={{ maxWidth: 1320, margin: '56px auto 0', padding: '0 40px', fontSize: 12.5, color: '#7c828a', lineHeight: 1.8 }}>
-        说明：协议与问卷为 H5 容器示意，正文非最终文案；Key 数量上限、IP 个数上限、ticket 有效期均为后台下发值，原型中仅作示例。
-        待外部确认项见设计文档第 5 节。
-      </div>
+      ))}
     </div>
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+function AuditEntryCard({ app, role, operator, onSubmitConclusion }) {
+  const { message, modal } = AntApp.useApp();
+  const [conclusion, setConclusion] = useState(null);
+  const [reason, setReason] = useState('');
+
+  if (app.status !== 'reviewing') {
+    // 已录入结论的申请：只读展示审核结论
+    if (!app.operator) return null;
+    return (
+      <SectionCard title="审核结论">
+        <Descriptions column={1} size="small" bordered={false}>
+          <Descriptions.Item label="结论">
+            <ApplyStatusTag status={app.status === 'opened' ? 'opened' : app.status} />
+            <Text style={{ marginLeft: 8, color: COLOR.muted, fontSize: 13 }}>
+              {app.status === 'opened' ? '（客户已完成开通流程）' : ''}
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="录入人 / 时间">{app.operator} <span className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{app.operateTime}</span></Descriptions.Item>
+          {app.conclusionNote && <Descriptions.Item label="理由 / 备注">{app.conclusionNote}</Descriptions.Item>}
+        </Descriptions>
+      </SectionCard>
+    );
+  }
+
+  if (role !== 'admin') {
+    return (
+      <SectionCard title="审核结论录入">
+        <Text style={{ color: COLOR.muted }}>当前为只读角色，仅可查看，不能录入审核结论。</Text>
+      </SectionCard>
+    );
+  }
+
+  const needReason = conclusion === 'rejected';
+  const canSubmit = !!conclusion && (!needReason || reason.trim().length > 0);
+
+  const doSubmit = () => {
+    if (!canSubmit) return;
+    const approved = conclusion === 'approved';
+    modal.confirm({
+      title: '审核结论二次确认',
+      icon: React.createElement(ExclamationCircleFilled, { style: { color: approved ? COLOR.primary : COLOR.down } }),
+      content: approved
+        ? '确认将该申请审核结论录入为「通过」？提交后客户将收到 APP 推送与站内信，从协议签署步骤继续申请流程（问卷无需重填）。'
+        : '确认将该申请审核结论录入为「驳回」？提交后 APP 端将向客户展示驳回理由，客户可重新申请。',
+      okText: '确认提交',
+      cancelText: '再想想',
+      onOk: () => {
+        onSubmitConclusion(app.id, approved ? 'approved' : 'rejected', reason.trim(), operator);
+        message.success('审核结论已录入，操作日志已留存');
+      }
+    });
+  };
+
+  return (
+    <SectionCard title="审核结论录入" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>人工审核走系统外 OA（交易部初审 → 风控部审核 → 合规部复核），此处仅录入最终结论</Text>}>
+      <div style={{ marginBottom: 16 }}>
+        <Radio.Group value={conclusion} onChange={e => setConclusion(e.target.value)}>
+          <Radio.Button value="approved">通过</Radio.Button>
+          <Radio.Button value="rejected">驳回</Radio.Button>
+        </Radio.Group>
+      </div>
+      <Input.TextArea
+        rows={3}
+        placeholder={needReason ? '驳回理由（必填，将在 APP 端向客户展示）' : '理由 / 备注（通过时选填）'}
+        value={reason}
+        onChange={e => setReason(e.target.value)}
+        style={{ borderRadius: 12, marginBottom: 16 }}
+      />
+      <Space>
+        <Button type="primary" disabled={!canSubmit} onClick={doSubmit}>提交结论</Button>
+        {needReason && !reason.trim() && <Text style={{ color: COLOR.down, fontSize: 13 }}>驳回时理由必填</Text>}
+      </Space>
+    </SectionCard>
+  );
+}
+
+function ApplyDetailPage({ app, role, operator, onBack, onSubmitConclusion }) {
+  return (
+    <div>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="text" icon={React.createElement(ArrowLeftOutlined)} onClick={onBack}>返回列表</Button>
+      </Space>
+
+      <SectionCard title="客户信息">
+        <Descriptions column={2} size="small">
+          <Descriptions.Item label="有鱼ID"><span className="mono">{app.yuId}</span></Descriptions.Item>
+          <Descriptions.Item label="姓名">{app.name}</Descriptions.Item>
+          <Descriptions.Item label="申请编号"><span className="mono" style={{ color: COLOR.muted }}>{app.id}</span></Descriptions.Item>
+          <Descriptions.Item label="提交时间"><span className="mono" style={{ color: COLOR.body }}>{app.submitTime}</span></Descriptions.Item>
+        </Descriptions>
+      </SectionCard>
+
+      <SectionCard title="申请状态">
+        <ApplyStatusTag status={app.status} />
+      </SectionCard>
+
+      <SectionCard title="问卷答案快照" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>提交时点快照，不可变；标红题目为选择「其他」的审核靶心</Text>}>
+        <QuestionnaireSnapshot data={app.questionnaire} />
+      </SectionCard>
+
+      <AuditEntryCard app={app} role={role} operator={operator} onSubmitConclusion={onSubmitConclusion} />
+    </div>
+  );
+}
+
+/* ==========================================================================
+   服务管理 · 客户列表
+   ========================================================================== */
+
+function ServiceListPage({ customers, onOpenDetail }) {
+  const [status, setStatus] = useState('all');
+  const [yuId, setYuId] = useState('');
+
+  const filtered = useMemo(() => {
+    return customers.filter(c => {
+      if (status !== 'all' && c.serviceStatus !== status) return false;
+      if (yuId && !c.yuId.includes(yuId.trim())) return false;
+      return true;
+    });
+  }, [customers, status, yuId]);
+
+  const columns = [
+    { title: '有鱼ID', dataIndex: 'yuId', width: 120, render: v => <span className="mono">{v}</span> },
+    { title: '姓名', dataIndex: 'name', width: 100 },
+    { title: '开通时间', dataIndex: 'openTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
+    { title: '服务状态', dataIndex: 'serviceStatus', width: 110, render: v => <ServiceStatusTag status={v} /> },
+    { title: 'Key 数量', width: 90, render: (_, r) => <span className="mono">{r.keys.length}</span> },
+    { title: '做市/高频标记', width: 140, render: (_, r) => r.hft ? <HftTag /> : <Text style={{ color: COLOR.muted }}>—</Text> },
+    { title: '操作', width: 80, align: 'center', render: (_, r) => (
+        <Button type="link" size="small" onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>详情</Button>
+      )
+    }
+  ];
+
+  return (
+    <SectionCard title="服务管理" extra={<Text style={{ color: COLOR.muted, fontSize: 13 }}>共 {filtered.length} 个客户</Text>}>
+      <Space size={12} wrap style={{ marginBottom: 20 }}>
+        <Select
+          value={status}
+          onChange={setStatus}
+          style={{ width: 140 }}
+          options={[
+            { value: 'all', label: '全部状态' },
+            { value: 'active', label: '已开通' },
+            { value: 'paused', label: '已暂停' },
+            { value: 'cancelled', label: '已注销' }
+          ]}
+        />
+        <Input.Search
+          placeholder="搜索有鱼ID"
+          allowClear
+          style={{ width: 220 }}
+          value={yuId}
+          onChange={e => setYuId(e.target.value)}
+        />
+      </Space>
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={filtered}
+        pagination={{ pageSize: 10, hideOnSinglePage: true }}
+        onRow={record => ({ className: 'row-clickable', onClick: () => onOpenDetail(record.id) })}
+        locale={{ emptyText: <Empty description="暂无符合条件的客户" /> }}
+      />
+    </SectionCard>
+  );
+}
+
+/* ==========================================================================
+   服务管理 · 客户详情
+   ========================================================================== */
+
+function ServiceDetailPage({ customer, role, operator, riskRecords, onBack, onOpenApply, onKeyToggle, onServiceAction }) {
+  const { message, modal } = AntApp.useApp();
+
+  const copyKey = (text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => message.success('APIKey（掩码）已复制'))
+        .catch(() => message.info('复制不可用，APIKey 掩码：' + text));
+    } else {
+      message.info('复制不可用，APIKey 掩码：' + text);
+    }
+  };
+
+  const confirmTerminate = () => {
+    modal.confirm({
+      title: '一键终止服务',
+      icon: React.createElement(ExclamationCircleFilled, { style: { color: COLOR.warn } }),
+      content: '一键终止将回收该客户全部 API 权限，全部 Key 立即置灰停止交易，APP 端显示「服务已被暂停」。该操作可通过「恢复服务」撤销。',
+      okText: '确认终止',
+      cancelText: '取消',
+      onOk: () => {
+        onServiceAction(customer.id, 'paused', '一键终止服务', '服务（全部 API 权限回收，全部 Key 置灰）');
+        message.success('服务已终止，全部 Key 已置灰');
+      }
+    });
+  };
+
+  const confirmResume = () => {
+    modal.confirm({
+      title: '恢复服务',
+      icon: React.createElement(ExclamationCircleFilled, { style: { color: COLOR.primary } }),
+      content: '确认恢复该客户的 OpenAPI 服务？恢复后各 Key 回到其自身状态（此前被单独暂停的 Key 仍为暂停）。',
+      okText: '确认恢复',
+      cancelText: '取消',
+      onOk: () => {
+        onServiceAction(customer.id, 'active', '恢复服务', '服务（API 权限恢复）');
+        message.success('服务已恢复');
+      }
+    });
+  };
+
+  const confirmForceCancel = () => {
+    modal.confirm({
+      title: '强制注销确认',
+      icon: React.createElement(ExclamationCircleFilled, { style: { color: COLOR.down } }),
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>强制注销为<b style={{ color: COLOR.down }}>终态操作，不可恢复</b>：</p>
+          <ul style={{ margin: 0, paddingLeft: 18, color: COLOR.body, lineHeight: 1.8 }}>
+            <li>全部 API Key 立即失效；</li>
+            <li>服务状态变为「已注销」，与客户自助注销同一终态；</li>
+            <li>客户 APP 端回到未开通介绍页，需重新申请方可再次开通。</li>
+          </ul>
+          <p style={{ marginTop: 8, color: COLOR.body }}>请确认该客户属于失联 / 违规清退场景。</p>
+        </div>
+      ),
+      okText: '确认强制注销',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => {
+        onServiceAction(customer.id, 'cancelled', '强制注销', '服务（终态，全部 Key 失效）');
+        message.success('服务已强制注销');
+      }
+    });
+  };
+
+  const keyColumns = [
+    { title: '名称', dataIndex: 'name', width: 140 },
+    { title: 'APIKey', dataIndex: 'apiKey', render: v => (
+        <Space size={4}>
+          <span className="mono">{v}</span>
+          <Button type="text" size="small" icon={React.createElement(CopyOutlined, { style: { color: COLOR.muted } })} onClick={() => copyKey(v)} />
+        </Space>
+      )
+    },
+    { title: '绑定 IP', dataIndex: 'ips', render: ips => (
+        <Space size={4} wrap>
+          {ips.slice(0, 3).map(ip => <Tag key={ip} className="mono" style={{ fontSize: 12 }}>{ip}</Tag>)}
+        </Space>
+      )
+    },
+    { title: '创建时间', dataIndex: 'createTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
+    { title: '状态', width: 90, render: (_, r) => <KeyStatusTag keyStatus={r.status} serviceStatus={customer.serviceStatus} /> },
+    ...(role === 'admin' && customer.serviceStatus === 'active' ? [{
+      title: '操作', width: 110, render: (_, r) => (
+        r.status === 'active' ? (
+          <Popconfirm
+            title="暂停该 Key？"
+            description="仅作用于该 Key，不影响其他 Key 与服务整体。"
+            okText="确认暂停"
+            cancelText="取消"
+            onConfirm={() => {
+              onKeyToggle(customer.id, r.id, 'paused');
+              message.success('Key「' + r.name + '」已暂停');
+            }}
+          >
+            <Button size="small" icon={React.createElement(PauseCircleOutlined)}>暂停</Button>
+          </Popconfirm>
+        ) : (
+          <Popconfirm
+            title="恢复该 Key？"
+            description="恢复后该 Key 可继续用于 API 交易。"
+            okText="确认恢复"
+            cancelText="取消"
+            onConfirm={() => {
+              onKeyToggle(customer.id, r.id, 'active');
+              message.success('Key「' + r.name + '」已恢复');
+            }}
+          >
+            <Button size="small" type="primary" ghost icon={React.createElement(PlayCircleOutlined)}>恢复</Button>
+          </Popconfirm>
+        )
+      )
+    }] : [])
+  ];
+
+  const logColumns = [
+    { title: '操作人', dataIndex: 'operator', width: 120 },
+    { title: '时间', dataIndex: 'time', width: 180, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
+    { title: '动作', dataIndex: 'action', width: 160 },
+    { title: '对象', dataIndex: 'target' },
+    { title: '结果', dataIndex: 'result', width: 80, render: v => <Tag color={v === '成功' ? 'green' : 'red'}>{v}</Tag> }
+  ];
+
+  const riskHistoryColumns = [
+    { title: '触发时间', dataIndex: 'time', width: 150, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
+    { title: '订单要素', width: 200, render: (_, r) => <OrderElementCell r={r} /> },
+    { title: '触发原因', render: (_, r) => <RiskReasonCell r={r} /> },
+    { title: '处置结果', dataIndex: 'action', width: 200, render: v => <RiskActionTag action={v} /> }
+  ];
+
+  const ticketText = customer.serviceStatus === 'cancelled'
+    ? '已注销'
+    : (customer.ticket.valid ? '会话有效' : '已过期');
+
+  return (
+    <div>
+      <Space style={{ marginBottom: 16 }} split={<Divider type="vertical" />}>
+        <Button type="text" icon={React.createElement(ArrowLeftOutlined)} onClick={onBack}>返回列表</Button>
+        <Link onClick={() => onOpenApply(customer.yuId)}>查看申请档案</Link>
+      </Space>
+
+      <SectionCard title="服务信息" extra={<ServiceStatusTag status={customer.serviceStatus} />}>
+        <Descriptions column={2} size="small">
+          <Descriptions.Item label="有鱼ID"><span className="mono">{customer.yuId}</span></Descriptions.Item>
+          <Descriptions.Item label="姓名">{customer.name}</Descriptions.Item>
+          <Descriptions.Item label="开通时间"><span className="mono" style={{ color: COLOR.body }}>{customer.openTime}</span></Descriptions.Item>
+          <Descriptions.Item label="注销时间">
+            {customer.cancelTime
+              ? <span className="mono" style={{ color: COLOR.body }}>{customer.cancelTime}</span>
+              : <Text style={{ color: COLOR.muted }}>—</Text>}
+          </Descriptions.Item>
+          <Descriptions.Item label="做市/高频标记">{customer.hft ? <HftTag /> : <Text style={{ color: COLOR.muted }}>未命中</Text>}</Descriptions.Item>
+          <Descriptions.Item label="已签协议版本号"><span className="mono">{customer.agreementVersion}</span>（交易适当性补充协议 + API 交易风险披露声明）</Descriptions.Item>
+        </Descriptions>
+      </SectionCard>
+
+      <SectionCard title="ticket 状态" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>只读展示；续期是客户在 APP 侧的自助动作，后台不代操作</Text>}>
+        <Space size={32}>
+          <span>
+            <Badge
+              status={customer.ticket.valid && customer.serviceStatus !== 'cancelled' ? 'success' : 'default'}
+              text={<Text strong style={{ color: customer.ticket.valid && customer.serviceStatus !== 'cancelled' ? COLOR.up : COLOR.muted }}>{ticketText}</Text>}
+            />
+          </span>
+          <span>
+            <Text style={{ color: COLOR.muted, fontSize: 13, marginRight: 8 }}>到期时间</Text>
+            <span className="mono">{customer.ticket.expireTime}</span>
+          </span>
+        </Space>
+      </SectionCard>
+
+      <SectionCard title="Key 列表" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>后台不展示、不存储 APISecret</Text>}>
+        <Table
+          rowKey="id"
+          columns={keyColumns}
+          dataSource={customer.keys}
+          pagination={false}
+        />
+      </SectionCard>
+
+      <SectionCard title="风控触发历史" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>与「风控记录」模块同一数据源，按当前客户过滤；系统外处置的跟进走系统外流程</Text>}>
+        <Table
+          rowKey="id"
+          size="small"
+          columns={riskHistoryColumns}
+          dataSource={riskRecords}
+          pagination={false}
+          locale={{ emptyText: <Empty description="暂无风控触发记录" /> }}
+        />
+      </SectionCard>
+
+      {role === 'admin' && (
+        <SectionCard title="操作区" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>全部操作仅弹窗二次确认，均落操作日志</Text>}>
+          <Space size={12} wrap>
+            {customer.serviceStatus === 'active' && (
+              <Button icon={React.createElement(StopOutlined)} onClick={confirmTerminate}>一键终止服务</Button>
+            )}
+            {customer.serviceStatus === 'paused' && (
+              <Button type="primary" ghost icon={React.createElement(PlayCircleOutlined)} onClick={confirmResume}>恢复服务</Button>
+            )}
+            {customer.serviceStatus !== 'cancelled' && (
+              <Button danger icon={React.createElement(DeleteOutlined)} onClick={confirmForceCancel}>强制注销</Button>
+            )}
+            {customer.serviceStatus === 'cancelled' && (
+              <Text style={{ color: COLOR.muted }}>服务已注销，为终态，无可用操作。</Text>
+            )}
+          </Space>
+        </SectionCard>
+      )}
+
+      <SectionCard title="操作日志" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>该客户全量操作记录，实时追加</Text>}>
+        <Table
+          rowKey={(r, i) => r.time + '-' + i}
+          columns={logColumns}
+          dataSource={[...customer.logs].sort((a, b) => (a.time < b.time ? 1 : -1))}
+          pagination={false}
+          size="small"
+        />
+      </SectionCard>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   风控记录 · 共享单元格 + 列表页（只读）
+   ========================================================================== */
+
+function OrderElementCell({ r }) {
+  return (
+    <div>
+      <Space size={6}>
+        <span className="mono">{r.symbol}</span>
+        <span>{r.symbolName}</span>
+        <Tag color={r.side === '买入' ? 'green' : 'red'} style={{ marginRight: 0 }}>{r.side}</Tag>
+      </Space>
+      <div className="mono" style={{ color: COLOR.muted, fontSize: 12, marginTop: 2 }}>{r.price} × {r.qty}</div>
+    </div>
+  );
+}
+
+function RiskReasonCell({ r }) {
+  return (
+    <div>
+      <Text strong style={{ fontSize: 13 }}>{r.rule}</Text>
+      <div style={{ color: COLOR.body, fontSize: 13 }}>{r.reason}</div>
+    </div>
+  );
+}
+
+function RiskActionTag({ action }) {
+  const meta = RISK_ACTION[action] || { text: action, color: null };
+  return meta.color
+    ? <Tag color={meta.color}>{meta.text}</Tag>
+    : <Tag>{meta.text}</Tag>;
+}
+
+function RiskListPage({ records }) {
+  const [yuId, setYuId] = useState('');
+  const [category, setCategory] = useState('all');
+  const [range, setRange] = useState(null);
+
+  const filtered = useMemo(() => {
+    return records
+      .filter(r => {
+        if (category !== 'all' && r.category !== category) return false;
+        if (yuId && !r.yuId.includes(yuId.trim())) return false;
+        if (range && range[0] && range[1]) {
+          const t = dayjs(r.time).valueOf();
+          if (t < range[0].startOf('day').valueOf() || t > range[1].endOf('day').valueOf()) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => (a.time < b.time ? 1 : -1));
+  }, [records, category, yuId, range]);
+
+  const columns = [
+    { title: '触发时间', dataIndex: 'time', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
+    { title: '有鱼ID', dataIndex: 'yuId', width: 110, render: v => <span className="mono">{v}</span> },
+    { title: '姓名', dataIndex: 'name', width: 90 },
+    { title: '订单要素', width: 200, render: (_, r) => <OrderElementCell r={r} /> },
+    { title: '触发原因', render: (_, r) => <RiskReasonCell r={r} /> },
+    { title: '处置结果', dataIndex: 'action', width: 210, render: v => <RiskActionTag action={v} /> }
+  ];
+
+  return (
+    <SectionCard title="风控记录" extra={<Text style={{ color: COLOR.muted, fontSize: 13 }}>共 {filtered.length} 条记录</Text>}>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16, borderRadius: 12 }}
+        message="本页覆盖全部风控触发记录：含拒单类记录与不拒单的告警类记录（策略 6 资金维度、策略 10）。每条记录的「处置结果」说明触发后的实际后果；系统外处置（重新 KYC、书面问询、STR 评估）的跟进走系统外流程。本模块只读。"
+      />
+      <Space size={12} wrap style={{ marginBottom: 20 }}>
+        <Select
+          value={category}
+          onChange={setCategory}
+          style={{ width: 160 }}
+          options={RISK_CATEGORY_OPTIONS}
+        />
+        <Input.Search
+          placeholder="搜索有鱼ID"
+          allowClear
+          style={{ width: 220 }}
+          value={yuId}
+          onChange={e => setYuId(e.target.value)}
+        />
+        <RangePicker value={range} onChange={setRange} placeholder={['拦截开始', '拦截结束']} />
+      </Space>
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={filtered}
+        pagination={{ pageSize: 10, hideOnSinglePage: true }}
+        locale={{ emptyText: <Empty description="暂无符合条件的记录" /> }}
+      />
+    </SectionCard>
+  );
+}
+
+/* ==========================================================================
+   后台壳（Sider + Header + 内容区）
+   ========================================================================== */
+
+function Shell({ user, role, onRoleChange, onLogout, route, onNavigate, children }) {
+  const selectedKey = route.page.indexOf('service') === 0
+    ? 'service-list'
+    : (route.page.indexOf('risk') === 0 ? 'risk-list' : 'apply-list');
+  const pageTitle = {
+    'apply-list': '申请管理',
+    'apply-detail': '申请管理 / 申请详情',
+    'service-list': '服务管理',
+    'service-detail': '服务管理 / 客户详情',
+    'risk-list': '风控记录'
+  }[route.page] || '';
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      <Layout.Sider width={220} style={{ borderRight: '1px solid ' + COLOR.hairline }}>
+        <div className="sider-logo">
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: COLOR.ink, letterSpacing: -0.2 }}>云锋有鱼</div>
+            <div style={{ fontSize: 12, color: COLOR.muted }}>OpenAPI 管理后台</div>
+          </div>
+        </div>
+        <Menu
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          style={{ borderInlineEnd: 'none', paddingTop: 8 }}
+          onClick={({ key }) => onNavigate({ page: key })}
+          items={[
+            { key: 'apply-list', icon: React.createElement(FileSearchOutlined), label: '申请管理' },
+            { key: 'service-list', icon: React.createElement(ControlOutlined), label: '服务管理' },
+            { key: 'risk-list', icon: React.createElement(SafetyOutlined), label: '风控记录' }
+          ]}
+        />
+      </Layout.Sider>
+      <Layout>
+        <Layout.Header style={{ height: 64, padding: '0 24px', borderBottom: '1px solid ' + COLOR.hairline, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ fontSize: 15, fontWeight: 600, color: COLOR.ink }}>{pageTitle}</Text>
+          <Space size={16}>
+            <Tooltip title="Demo 便利功能：真实产品角色由账号决定">
+              <Segmented
+                value={role}
+                onChange={onRoleChange}
+                options={[
+                  { value: 'admin', label: '管理员' },
+                  { value: 'readonly', label: '只读' }
+                ]}
+              />
+            </Tooltip>
+            <Space size={6}>
+              {React.createElement(UserOutlined, { style: { color: COLOR.muted } })}
+              <Text style={{ color: COLOR.body }}>{user.account}</Text>
+            </Space>
+            <Button type="text" icon={React.createElement(LogoutOutlined)} onClick={onLogout}>退出登录</Button>
+          </Space>
+        </Layout.Header>
+        {/* 后台为登录墙后的密度型工具，不套用营销页 1200px 容器（DESIGN-visual.md
+           「Density lives behind login walls」），内容区随屏幕流式铺满 */}
+        <Layout.Content style={{ padding: '24px 32px', width: '100%' }}>
+          {children}
+        </Layout.Content>
+      </Layout>
+    </Layout>
+  );
+}
+
+/* ==========================================================================
+   根组件：登录态 / 角色 / 内存态路由 / mock 数据与操作
+   ========================================================================== */
+
+function Root() {
+  const [user, setUser] = useState(null);
+  const [role, setRole] = useState('admin');
+  const [route, setRoute] = useState({ page: 'apply-list' });
+  const [applications, setApplications] = useState(INITIAL_APPLICATIONS);
+  const [customers, setCustomers] = useState(INITIAL_CUSTOMERS);
+
+  if (!user) {
+    return (
+      <LoginPage onLogin={(account) => {
+        setUser({ account });
+        setRoute({ page: 'apply-list' });
+      }} />
+    );
+  }
+
+  const operator = user.account;
+
+  const handleSubmitConclusion = (appId, conclusion, note, op) => {
+    setApplications(prev => prev.map(a => a.id === appId
+      ? { ...a, status: conclusion, operator: op, operateTime: nowText(), conclusionNote: note || null }
+      : a
+    ));
+  };
+
+  const handleKeyToggle = (customerId, keyId, nextStatus) => {
+    setCustomers(prev => prev.map(c => {
+      if (c.id !== customerId) return c;
+      const key = c.keys.find(k => k.id === keyId);
+      return {
+        ...c,
+        keys: c.keys.map(k => k.id === keyId ? { ...k, status: nextStatus } : k),
+        logs: [...c.logs, {
+          operator, time: nowText(),
+          action: nextStatus === 'paused' ? '暂停 Key' : '恢复 Key',
+          target: key ? key.name : keyId,
+          result: '成功'
+        }]
+      };
+    }));
+  };
+
+  const handleServiceAction = (customerId, nextStatus, action, target) => {
+    setCustomers(prev => prev.map(c => {
+      if (c.id !== customerId) return c;
+      return {
+        ...c,
+        serviceStatus: nextStatus,
+        cancelTime: nextStatus === 'cancelled' ? nowText() : c.cancelTime,
+        logs: [...c.logs, { operator, time: nowText(), action, target, result: '成功' }]
+      };
+    }));
+  };
+
+  const currentApp = route.page === 'apply-detail'
+    ? applications.find(a => a.id === route.id)
+    : null;
+  const currentCustomer = route.page === 'service-detail'
+    ? customers.find(c => c.id === route.id)
+    : null;
+
+  const openApplyByYuId = (yuId) => {
+    const app = applications.find(a => a.yuId === yuId);
+    if (app) setRoute({ page: 'apply-detail', id: app.id });
+  };
+
+  let content = null;
+  if (route.page === 'apply-list') {
+    content = <ApplyListPage applications={applications} onOpenDetail={(id) => setRoute({ page: 'apply-detail', id })} />;
+  } else if (route.page === 'apply-detail' && currentApp) {
+    content = (
+      <ApplyDetailPage
+        app={currentApp}
+        role={role}
+        operator={operator}
+        onBack={() => setRoute({ page: 'apply-list' })}
+        onSubmitConclusion={handleSubmitConclusion}
+      />
+    );
+  } else if (route.page === 'service-list') {
+    content = <ServiceListPage customers={customers} onOpenDetail={(id) => setRoute({ page: 'service-detail', id })} />;
+  } else if (route.page === 'service-detail' && currentCustomer) {
+    content = (
+      <ServiceDetailPage
+        customer={currentCustomer}
+        role={role}
+        operator={operator}
+        riskRecords={INITIAL_RISK_RECORDS
+          .filter(r => r.yuId === currentCustomer.yuId)
+          .sort((a, b) => (a.time < b.time ? 1 : -1))}
+        onBack={() => setRoute({ page: 'service-list' })}
+        onOpenApply={openApplyByYuId}
+        onKeyToggle={handleKeyToggle}
+        onServiceAction={handleServiceAction}
+      />
+    );
+  } else if (route.page === 'risk-list') {
+    content = <RiskListPage records={INITIAL_RISK_RECORDS} />;
+  }
+
+  return (
+    <Shell
+      user={user}
+      role={role}
+      onRoleChange={setRole}
+      onLogout={() => { setUser(null); setRole('admin'); }}
+      route={route}
+      onNavigate={setRoute}
+    >
+      {content}
+    </Shell>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ConfigProvider locale={zhCN} theme={themeConfig}>
+    <AntApp>
+      <Root />
+    </AntApp>
+  </ConfigProvider>
+);
 </script>
 </body>
 </html>
