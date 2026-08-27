@@ -1012,6 +1012,8 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
 function PhoneApp({ status, setStatus, screen, setScreen, showToast, ticket, setTicket, keys, setKeys }) {
   const [pwd, setPwd] = useState(null);
   const [rejected, setRejected] = useState(false);
+  const [quizA, setQuizA] = useState({});
+  const [quizOthers, setQuizOthers] = useState({});
 
   const enterApi = () => {
     if (status === 'none') setScreen('intro');
@@ -1031,11 +1033,15 @@ function PhoneApp({ status, setStatus, screen, setScreen, showToast, ticket, set
     reviewing: <ReviewingScreen onBack={() => setScreen('services')}
       onPass={() => { showToast('审核通过（模拟）'); setScreen('agreement'); }}
       onReject={() => { setStatus('none'); setRejected(true); setScreen('intro'); }} />,
-    quiz: <QuizScreen onBack={() => setScreen('intro')} onClose={() => setScreen('intro')} showToast={showToast}
+    quiz: <QuizScreen onBack={() => setScreen('intro')} onClose={() => setScreen('intro')} showToast={showToast} a={quizA} setA={setQuizA} others={quizOthers} setOthers={setQuizOthers}
       onSubmit={(r) => {
-        if (r === 'manual') { setStatus('reviewing'); setScreen('reviewing'); }
+        if (r === 'reject') { setScreen('notApproved'); }
+        else if (r === 'manual') { setStatus('reviewing'); setScreen('reviewing'); }
         else { showToast('逻辑校验通过 · 自动审核'); setScreen('agreement'); }
       }} />,
+    notApproved: <NotApprovedScreen
+      onRevise={() => setScreen('quiz')}
+      onGiveUp={() => { setRejected(true); setQuizA({}); setQuizOthers({}); setScreen('intro'); }} />,
     agreement: <AgreementScreen onBack={() => setScreen('quiz')} onClose={() => setScreen('intro')}
       onNext={() => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; setPwd(true); }} />,
     manage: <ManageScreen suspended={status === 'suspended'} keys={keys} ticket={ticket}
@@ -1065,7 +1071,8 @@ const SCENARIOS = [
 ];
 const FLOW = [
   ['services', '全部服务（入口）'], ['intro', 'API 交易 · 介绍页'], ['quiz', 'Step1 问卷'],
-  ['agreement', 'Step2 协议签署（签署即开通）'], ['manage', '管理页 / 创建 Key'], ['reviewing', '审核中'],
+  ['agreement', 'Step2 协议签署（签署即开通）'], ['manage', '管理页 / 创建 Key'],
+  ['notApproved', '不予通过结果页'], ['reviewing', '审核中'],
 ];
 
 function App() {
@@ -1277,9 +1284,7 @@ const QUESTIONS = [
   { id: 'q42e', sec: 3, short: '应急处理方案', text: '4.2.2 異常情況（如系統故障、市場劇烈波動）的應急處理方案（可多選）', type: 'm', opts: ['自动熔断/暂停策略', '自动止损平仓', '撤单重试', '切换人工手动交易', '告警通知人工介入', '其他'], otherFill: true },
 ];
 
-function QuizScreen({ onBack, onClose, onSubmit, showToast }) {
-  const [a, setA] = useState({});
-  const [others, setOthers] = useState({});
+function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, setOthers }) {
   const [sheet, setSheet] = useState(null);
   const [missed, setMissed] = useState([]);
   const [reconfirm, setReconfirm] = useState({});
@@ -1350,6 +1355,7 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast }) {
       if (el && c) c.scrollTop = el.offsetTop - 70;
       return;
     }
+    if (a.q32 && (a.q32.startsWith('保守型') || a.q32.startsWith('稳健型'))) { onSubmit('reject'); return; }
     const manual = visible.some(q => q.otherFill && (a[q.id] || []).includes('其他'));
     onSubmit(manual ? 'manual' : 'auto');
   };
@@ -1405,7 +1411,7 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast }) {
       </div>
       <FormFooter backText="上一步" nextText="提交" onBack={tryExit} onNext={submit} />
       {exitAsk && (
-        <ConfirmModal title="确认退出申请？" lines={['退出后已填写的问卷内容将不保留。']} confirmText="退出" onCancel={() => setExitAsk(false)} onConfirm={onClose} />
+        <ConfirmModal title="确认退出申请？" lines={['退出后已填写的问卷内容将不保留。']} confirmText="退出" onCancel={() => setExitAsk(false)} onConfirm={() => { setA({}); setOthers({}); onClose(); }} />
       )}
       {sheet && (
         <SheetSelect title={sheet.short} options={sheet.opts} multi={sheet.type === 'm'}
@@ -1444,6 +1450,31 @@ function PhoneOverlay({ children, style }) {
 }
 
 Object.assign(window, { PhoneOverlay });
+</script>
+<script type="text/babel">
+/* ================= 浅色页: 不予通过结果页（规则⑤ 提交后终态） ================= */
+function NotApprovedScreen({ onRevise, onGiveUp }) {
+  return (
+    <div style={{ background: TK.canvas, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, padding: '48px 26px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(207,32,47,0.1)', color: TK.down, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginBottom: 16 }}>✕</div>
+        <div style={{ fontSize: 20, fontWeight: 600, color: TK.ink, marginBottom: 12 }}>申请未获通过</div>
+        <div style={{ fontSize: 13, color: TK.body, lineHeight: 1.8, textAlign: 'center' }}>
+          根据您申报的风险承受能力（保守型 / 稳健型），API 交易服务的风险等级与您不匹配，本次申请未获通过。
+        </div>
+        <div style={{ fontSize: 12, color: TK.muted, lineHeight: 1.7, textAlign: 'center', marginTop: 14, background: TK.surfaceSoft, borderRadius: 12, padding: '12px 16px' }}>
+          如您此前填写有误，可返回修改答案后重新提交；如风险状况真实发生变化，请更新风险测评后重新申请。
+        </div>
+      </div>
+      <div style={{ padding: '12px 20px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <button onClick={onRevise} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 16, fontWeight: 600 }}>返回修改答案</button>
+        <button onClick={onGiveUp} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.canvas, border: `1.5px solid ${TK.hairline}`, color: TK.body, fontSize: 16, fontWeight: 600 }}>放弃申请</button>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { NotApprovedScreen });
 </script>
 </body>
 </html>
