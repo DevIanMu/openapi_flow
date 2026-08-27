@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>云锋有鱼 · OpenAPI 申请与管理 Flow Demo</title>
+
+<!--
+  ============================================================================
+  云锋有鱼 OpenAPI 申请与管理 · 高保真可交互 Flow Demo
+  ----------------------------------------------------------------------------
+  依据: docs/superpowers/specs/2026-08-24-app-openapi-apply-design.md
+  视觉: DESIGN-visual.md (Coinbase 风格, 主色 #0052ff)
+       + APP 实际形态 (background/screenshot/):
+         主界面深色 (全部服务/我的) · 表单流程浅色 (开户页面)
+  假设 (Assumptions):
+  1. 深色页 = 原生 (入口/介绍/管理), 浅色页 = 申请流表单 (对齐开户页面结构:
+     分段进度条 + 底部双按钮); 问卷/协议 H5 内容用繁中, 原生 chrome 用简体
+  2. 交易密码弹窗为演示组件, 任意 6 位或"一键填入"均可通过
+  3. Key 上限 N=3 仅为演示取值; ticket 有效期 7 天为暂定值
+  4. 问卷为节选题目, 用于演示: 1.1 渐进展示 / 联动置灰 / 统一提示 / 其他转人工
+  5. 页面左侧为 Demo 评审面板 (场景切换 + 流程跳转), 非产品 UI
+  ============================================================================
+-->
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #eef0f3;
+    color: #0a0b0d;
+    -webkit-font-smoothing: antialiased;
+  }
+  #root { min-height: 100vh; }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  button { font-family: inherit; border: none; background: none; cursor: pointer; }
+  input { font-family: inherit; outline: none; }
+  @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes sheetUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+/* ================= 设计 tokens (DESIGN-visual.md) ================= */
+const TK = {
+  blue: '#0052ff',
+  blueActive: '#003ecc',
+  blueDisabled: '#a8b8cc',
+  blueOnDark: '#4d8dff',        // primary 在深色底上的文字化变体 (demo 扩展)
+  ink: '#0a0b0d',
+  body: '#5b616e',
+  muted: '#7c828a',
+  mutedSoft: '#a8acb3',
+  hairline: '#dee1e6',
+  hairlineSoft: '#eef0f3',
+  canvas: '#ffffff',
+  surfaceSoft: '#f7f7f7',
+  surfaceStrong: '#eef0f3',
+  dark: '#0a0b0d',
+  darkCard: '#16181c',
+  darkLine: 'rgba(255,255,255,0.08)',
+  onDark: '#ffffff',
+  onDarkSoft: '#a8acb3',
+  up: '#05b169',
+  down: '#cf202f',
+  yellow: '#f4b000',
+  mono: "'JetBrains Mono', monospace",
+};
+
+const FAIL_HINT = '选择该选项可能导致申请失败'; // 统一提示文案 (8/25 定稿)
+
+/* ================= iOS 设备框 (skill 标准组件, 勿改) ================= */
+const iosFrameStyles = {
+  wrapper: { display: 'inline-block', padding: 12, background: '#000', borderRadius: 60, boxShadow: '0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position: 'relative' },
+  screen: { position: 'relative', borderRadius: 48, overflow: 'hidden', background: '#fff' },
+  statusBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 54, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px', fontSize: 16, fontWeight: 600, zIndex: 20, pointerEvents: 'none' },
+  dynamicIsland: { position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', width: 124, height: 36, background: '#000', borderRadius: 999, zIndex: 30 },
+  statusIcons: { display: 'flex', alignItems: 'center', gap: 6 },
+  signalIcon: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 12 },
+  signalBar: { width: 3, background: 'currentColor', borderRadius: 1 },
+  batteryIcon: { width: 26, height: 12, border: '1.5px solid currentColor', borderRadius: 3, padding: 1, position: 'relative', opacity: 0.8 },
+  batteryCap: { position: 'absolute', top: 3, right: -3, width: 2, height: 6, background: 'currentColor', borderRadius: '0 1px 1px 0' },
+  content: { position: 'absolute', top: 54, left: 0, right: 0, bottom: 34, overflow: 'auto' },
+  homeIndicator: { position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', width: 140, height: 5, background: 'rgba(0,0,0,0.3)', borderRadius: 999, zIndex: 10 },
+};
+function IosFrame({ children, width = 393, height = 852, time = '9:41', battery = 100, darkMode = true }) {
+  const textColor = darkMode ? '#fff' : '#000';
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width, height, background: darkMode ? '#000' : '#fff' }}>
+        <div style={{ ...iosFrameStyles.statusBar, color: textColor }}>
+          <span>{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height: 4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height: 6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height: 9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height: 11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color: textColor }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width: `${battery}%`, height: '100%', background: 'currentColor', borderRadius: 1, opacity: 0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div id="phone-content" style={iosFrameStyles.content}>{children}</div>
+        <div style={{ ...iosFrameStyles.homeIndicator, background: darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)' }} />
+      </div>
+    </div>
+  );
+}
+
+/* ================= 通用小组件 ================= */
+
+// Toast（渲染在手机屏幕覆盖层内，不受页面滚动影响）
+function Toast({ text }) {
+  if (!text) return null;
+  return (
+    <PhoneOverlay style={{ pointerEvents: 'none' }}>
+      <div style={{
+        position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+        background: 'rgba(10,11,13,0.92)', color: '#fff', fontSize: 13,
+        padding: '10px 18px', borderRadius: 100, zIndex: 60,
+        animation: 'toastIn 0.25s ease', textAlign: 'center', maxWidth: 300, width: 'fit-content',
+      }}>{text}</div>
+    </PhoneOverlay>
+  );
+}
+
+// 深色页顶部导航
+function DarkNav({ title, onBack }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 8px', position: 'relative' }}>
+      <button onClick={onBack} style={{ color: '#fff', fontSize: 22, padding: '4px 12px', lineHeight: 1 }}>‹</button>
+      <div style={{ position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#fff', fontSize: 16, fontWeight: 600, pointerEvents: 'none' }}>{title}</div>
+    </div>
+  );
+}
+
+// 浅色表单页顶部: 返回/关闭 + 标题 + 分段进度条 (对齐开户页面)
+function LightNav({ title, step, total, onBack, onClose }) {
+  return (
+    <div style={{ background: TK.canvas }}>
+      <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 8px' }}>
+        <button onClick={onBack} style={{ color: TK.ink, fontSize: 22, padding: '4px 10px', lineHeight: 1 }}>‹</button>
+        <button onClick={onClose} style={{ color: TK.ink, fontSize: 18, padding: '4px 10px', lineHeight: 1 }}>✕</button>
+        <div style={{ flex: 1, textAlign: 'center', color: TK.ink, fontSize: 15, fontWeight: 600, marginRight: 56 }}>{title}</div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, padding: '4px 20px 14px' }}>
+        {Array.from({ length: total }).map((_, i) => (
+          <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i < step ? TK.blue : TK.hairlineSoft }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 浅色页底部双按钮 (开户页面同款: 上一步 ghost + 下一步 solid)
+function FormFooter({ backText, nextText, onBack, onNext, nextDisabled }) {
+  return (
+    <div style={{ display: 'flex', gap: 12, padding: '14px 20px 20px', background: TK.canvas, borderTop: `1px solid ${TK.hairlineSoft}` }}>
+      {onBack && (
+        <button onClick={onBack} style={{
+          flex: 1, height: 48, borderRadius: 100, fontSize: 16, fontWeight: 600,
+          color: TK.blue, border: `1.5px solid ${TK.blue}`, background: TK.canvas,
+        }}>{backText || '上一步'}</button>
+      )}
+      <button onClick={onNext} disabled={nextDisabled} style={{
+        flex: 1, height: 48, borderRadius: 100, fontSize: 16, fontWeight: 600,
+        color: '#fff', background: nextDisabled ? TK.blueDisabled : TK.blue,
+        cursor: nextDisabled ? 'not-allowed' : 'pointer',
+      }}>{nextText || '下一步'}</button>
+    </div>
+  );
+}
+
+// 勾选项 (圆形 checkbox)
+function CheckItem({ checked, onToggle, label, sub }) {
+  return (
+    <button onClick={onToggle} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, textAlign: 'left', width: '100%' }}>
+      <div style={{
+        width: 20, height: 20, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+        border: checked ? 'none' : `1.5px solid ${TK.mutedSoft}`,
+        background: checked ? TK.blue : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: '#fff', fontSize: 12, fontWeight: 700,
+      }}>{checked ? '✓' : ''}</div>
+      <div style={{ fontSize: 13, color: TK.body, lineHeight: 1.5 }}>{label}{sub && <div style={{ fontSize: 12, color: TK.muted }}>{sub}</div>}</div>
+    </button>
+  );
+}
+
+// 单选/多选选项 (浅色表单用)
+function Option({ label, selected, disabled, onClick, multi }) {
+  return (
+    <button onClick={disabled ? undefined : onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+      padding: '12px 14px', borderRadius: 12, marginBottom: 8,
+      border: `1.5px solid ${selected ? TK.blue : TK.hairlineSoft}`,
+      background: disabled ? TK.surfaceSoft : (selected ? 'rgba(0,82,255,0.04)' : TK.canvas),
+      cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1,
+    }}>
+      <div style={{
+        width: 18, height: 18, flexShrink: 0,
+        borderRadius: multi ? 5 : '50%',
+        border: selected ? 'none' : `1.5px solid ${disabled ? TK.mutedSoft : TK.mutedSoft}`,
+        background: selected ? TK.blue : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: '#fff', fontSize: 11, fontWeight: 700,
+      }}>{selected ? '✓' : ''}</div>
+      <span style={{ fontSize: 14, color: disabled ? TK.muted : TK.ink }}>{label}</span>
+      {disabled && <span style={{ marginLeft: 'auto', fontSize: 11, color: TK.muted }}>不可选</span>}
+    </button>
+  );
+}
+
+// 题组容器
+function QGroup({ title, note, children }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink, marginBottom: 4, lineHeight: 1.4 }}>{title}</div>
+      {note && <div style={{ fontSize: 12, color: TK.muted, marginBottom: 10 }}>{note}</div>}
+      {!note && <div style={{ height: 6 }} />}
+      {children}
+    </div>
+  );
+}
+
+Object.assign(window, { TK, FAIL_HINT, IosFrame, Toast, DarkNav, LightNav, FormFooter, CheckItem, Option, QGroup });
+</script>
+
+<script type="text/babel">
+/* ================= 弹窗组件 ================= */
+
+// 交易密码验证弹窗 (Demo: 任意 6 位通过)
+function PasswordModal({ title, sub, onClose, onSuccess, showToast }) {
+  const [digits, setDigits] = useState('');
+  const [busy, setBusy] = useState(false);
+  const press = (d) => {
+    if (busy) return;
+    const next = (digits + d).slice(0, 6);
+    setDigits(next);
+    if (next.length === 6) {
+      setBusy(true);
+      setTimeout(() => { onSuccess(next); }, 550);
+    }
+  };
+  return (
+    <PhoneOverlay>
+    <div style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.55)', zIndex: 50, display: 'flex', alignItems: 'flex-end', animation: 'fadeIn 0.2s' }}>
+      <div style={{ width: '100%', background: TK.canvas, borderRadius: '20px 20px 0 0', padding: '20px 24px 28px', animation: 'sheetUp 0.28s ease' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: TK.ink }}>{title || '验证交易密码'}</div>
+          <button onClick={onClose} style={{ color: TK.muted, fontSize: 18, padding: 4 }}>✕</button>
+        </div>
+        <div style={{ fontSize: 12, color: TK.muted, marginBottom: 18 }}>{sub || '请输入 6 位交易密码以继续'}</div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 20 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} style={{
+              width: 12, height: 12, borderRadius: '50%',
+              background: i < digits.length ? TK.ink : TK.hairlineSoft,
+            }} />
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+          {[1,2,3,4,5,6,7,8,9].map(n => (
+            <button key={n} onClick={() => press(String(n))} style={{ height: 48, fontSize: 20, fontWeight: 500, color: TK.ink, borderRadius: 10, background: TK.surfaceSoft }}>{n}</button>
+          ))}
+          <button onClick={() => { setDigits('888888'); setBusy(true); setTimeout(() => onSuccess('888888'), 550); }} style={{ height: 48, fontSize: 11, color: TK.blue, borderRadius: 10, background: 'rgba(0,82,255,0.06)' }}>一键填入<br/>Demo</button>
+          <button onClick={() => press('0')} style={{ height: 48, fontSize: 20, fontWeight: 500, color: TK.ink, borderRadius: 10, background: TK.surfaceSoft }}>0</button>
+          <button onClick={() => setDigits(digits.slice(0, -1))} style={{ height: 48, fontSize: 16, color: TK.muted, borderRadius: 10, background: TK.surfaceSoft }}>⌫</button>
+        </div>
+      </div>
+    </div>
+    </PhoneOverlay>
+  );
+}
+
+// 通用确认弹窗 (删除 Key / 注销)
+function ConfirmModal({ title, lines, danger, confirmText, onCancel, onConfirm }) {
+  return (
+    <PhoneOverlay>
+    <div style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.55)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, animation: 'fadeIn 0.2s' }}>
+      <div style={{ width: '100%', background: TK.canvas, borderRadius: 20, padding: '24px 22px', animation: 'sheetUp 0.25s ease' }}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: TK.ink, marginBottom: 10 }}>{title}</div>
+        {lines.map((l, i) => <div key={i} style={{ fontSize: 13, color: TK.body, lineHeight: 1.6, marginBottom: 4 }}>{l}</div>)}
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button onClick={onCancel} style={{ flex: 1, height: 44, borderRadius: 100, fontSize: 15, fontWeight: 600, color: TK.ink, background: TK.surfaceStrong }}>取消</button>
+          <button onClick={onConfirm} style={{ flex: 1, height: 44, borderRadius: 100, fontSize: 15, fontWeight: 600, color: '#fff', background: danger ? TK.down : TK.blue }}>{confirmText}</button>
+        </div>
+      </div>
+    </div>
+    </PhoneOverlay>
+  );
+}
+
+// 协议全文阅读器
+function DocModal({ doc, onClose }) {
+  return (
+    <PhoneOverlay>
+    <div style={{ position: 'absolute', inset: 0, background: TK.canvas, zIndex: 55, display: 'flex', flexDirection: 'column', animation: 'fadeIn 0.2s' }}>
+      <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 8px', borderBottom: `1px solid ${TK.hairlineSoft}` }}>
+        <button onClick={onClose} style={{ color: TK.ink, fontSize: 22, padding: '4px 12px' }}>‹</button>
+        <div style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 600, color: TK.ink, marginRight: 40 }}>{doc.title}</div>
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: '20px 22px' }}>
+        <div style={{ fontSize: 12, color: TK.muted, marginBottom: 14 }}>全文 {doc.pages} 页 · 以下为节选</div>
+        {doc.body.map((p, i) => (
+          <p key={i} style={{ fontSize: 13, color: TK.body, lineHeight: 1.8, marginBottom: 12 }}>{p}</p>
+        ))}
+        <div style={{ fontSize: 12, color: TK.mutedSoft, textAlign: 'center', padding: '12px 0 24px' }}>— 节选结束 · 完整文本以发布版本为准 —</div>
+      </div>
+      <div style={{ padding: '12px 20px 20px', borderTop: `1px solid ${TK.hairlineSoft}` }}>
+        <button onClick={onClose} style={{ width: '100%', height: 46, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 15, fontWeight: 600 }}>关闭</button>
+      </div>
+    </div>
+    </PhoneOverlay>
+  );
+}
+
+/* ================= 深色页: 全部服务 (新增 OpenAPI 分组) ================= */
+function ServicesScreen({ onEnter }) {
+  const groups = [
+    { name: '交易', items: ['下单', '今日订单', '历史订单', '新股中心', '融资股票'] },
+    { name: '资金', items: ['存入资金', '提取资金', '货币兑换', '资金记录', '资金流水', '银行账户', '支付万通保费'] },
+    { name: 'OpenAPI', items: ['API 交易'], highlight: true },
+    { name: '股票', items: ['股票转入', '股票转出', '转仓记录', '股票流水'] },
+    { name: '账户', items: ['基本资料', '账户资料', '结单', '风险测评', 'PI认证'] },
+  ];
+  return (
+    <div style={{ background: TK.dark, minHeight: '100%' }}>
+      <DarkNav title="全部服务" onBack={() => {}} />
+      <div style={{ padding: '4px 14px 24px' }}>
+        {groups.map(g => (
+          <div key={g.name} style={{ background: TK.darkCard, borderRadius: 16, padding: '16px 16px 10px', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <span style={{ color: '#fff', fontSize: 15, fontWeight: 600 }}>{g.name}</span>
+              {g.highlight && <span style={{ fontSize: 10, color: TK.blueOnDark, border: `1px solid ${TK.blueOnDark}`, borderRadius: 100, padding: '1px 7px' }}>NEW</span>}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px 8px' }}>
+              {g.items.map(it => (
+                <button key={it} onClick={g.highlight ? onEnter : undefined} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, cursor: g.highlight ? 'pointer' : 'default' }}>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: `1.5px solid ${g.highlight ? TK.blueOnDark : 'rgba(255,255,255,0.25)'}`,
+                    color: g.highlight ? TK.blueOnDark : 'rgba(255,255,255,0.75)', fontSize: 17,
+                  }}>{g.highlight ? '⌁' : '▤'}</div>
+                  <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11 }}>{it}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ================= 深色页: API 交易介绍页 (未开通) ================= */
+function IntroScreen({ onBack, onApply, rejected }) {
+  return (
+    <div style={{ background: TK.dark, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <DarkNav title="API 交易" onBack={onBack} />
+      <div style={{ flex: 1, padding: '8px 20px 20px', overflow: 'auto' }}>
+        {rejected && (
+          <div style={{ background: 'rgba(207,32,47,0.12)', border: '1px solid rgba(207,32,47,0.35)', borderRadius: 12, padding: '12px 14px', marginBottom: 16 }}>
+            <div style={{ color: '#ff6b75', fontSize: 13, fontWeight: 600, marginBottom: 2 }}>申请未获通过</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.5 }}>您申报的风险承受能力与 API 交易服务的风险等级不匹配。如有疑问请联系客服。</div>
+          </div>
+        )}
+        <div style={{ fontSize: 26, fontWeight: 400, color: '#fff', lineHeight: 1.25, letterSpacing: -0.5, margin: '14px 0 10px' }}>
+          用你的程序<br/>直连云锋交易
+        </div>
+        <div style={{ fontSize: 13, color: TK.onDarkSoft, lineHeight: 1.7, marginBottom: 24 }}>
+          通过 OpenAPI，以量化脚本、第三方终端或 AI Agent 完成行情查询、下单撤单与账户查询。券商仅作为订单路由通道，所有委托由你自主触发。
+        </div>
+
+        {[
+          ['REST + WebSocket', '同一套 APIKey / Secret / ticket / IP 白名单'],
+          ['交易能力', '行情查询 · 下单撤单 · 账户查询 · 与 APP 共享资金账户'],
+          ['安全机制', 'IP 白名单 · ticket 会话续期 · 交易密码验证'],
+        ].map(([t, d]) => (
+          <div key={t} style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginBottom: 10 }}>
+            <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 3 }}>{t}</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.6 }}>{d}</div>
+          </div>
+        ))}
+
+        <div style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginBottom: 10, marginTop: 4 }}>
+          <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>开通前请知悉</div>
+          {['需完成适当性调查问卷（自动审核）', '需签署《交易适当性补充协议》与《API交易风险披露声明》', '美股等部分品种实时行情需另行购买行情卡', '当前为灰度体验期，仅白名单用户可申请'].map(t => (
+            <div key={t} style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
+              <span style={{ color: TK.blueOnDark, fontSize: 12 }}>·</span>
+              <span style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.6 }}>{t}</span>
+            </div>
+          ))}
+        </div>
+        <button style={{ color: TK.blueOnDark, fontSize: 13, padding: '8px 0' }}>查看接入文档 ›</button>
+      </div>
+      <div style={{ padding: '12px 20px 22px' }}>
+        <button onClick={onApply} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 16, fontWeight: 600 }}>立即申请</button>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 深色页: 审核中主页 (转人工分流) ================= */
+function ReviewingScreen({ onBack, onPass, onReject }) {
+  return (
+    <div style={{ background: TK.dark, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <DarkNav title="API 交易" onBack={onBack} />
+      <div style={{ flex: 1, padding: '8px 20px' }}>
+        <div style={{ background: TK.darkCard, borderRadius: 16, padding: '26px 20px', textAlign: 'center', marginTop: 8 }}>
+          <div style={{ width: 52, height: 52, borderRadius: '50%', border: `2px solid ${TK.yellow}`, margin: '0 auto 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: TK.yellow, fontSize: 22 }}>◷</div>
+          <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, marginBottom: 8 }}>申请审核中</div>
+          <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.7 }}>
+            你的问卷包含需人工复核的内容，专员正在处理。<br/>结果将通过 APP 推送与站内信通知。
+          </div>
+          <div style={{ marginTop: 14, display: 'inline-block', background: 'rgba(244,176,0,0.12)', color: TK.yellow, fontSize: 11, borderRadius: 100, padding: '4px 12px' }}>预计 1-3 个工作日（SLA 待业务确认）</div>
+        </div>
+        <div style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginTop: 12 }}>
+          <div style={{ color: '#fff', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>已提交的问卷结论</div>
+          <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.7 }}>逻辑校验已通过；4.1 / 4.2 含「其他」自定义填写，转人工复核。审核通过后将从「协议签署」继续，问卷无需重填。</div>
+        </div>
+        <button style={{ color: TK.blueOnDark, fontSize: 13, padding: '14px 0' }}>联系客服 ›</button>
+      </div>
+      {/* Demo 控制: 模拟审核结果 */}
+      <div style={{ padding: '12px 20px 22px', borderTop: `1px solid ${TK.darkLine}` }}>
+        <div style={{ color: TK.mutedSoft, fontSize: 10, marginBottom: 8, textAlign: 'center' }}>— Demo 控制（非产品 UI）—</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onPass} style={{ flex: 1, height: 44, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 14, fontWeight: 600 }}>模拟审核通过</button>
+          <button onClick={onReject} style={{ flex: 1, height: 44, borderRadius: 100, background: 'transparent', border: `1px solid ${TK.mutedSoft}`, color: TK.onDarkSoft, fontSize: 14, fontWeight: 600 }}>模拟驳回</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { PasswordModal, ConfirmModal, DocModal, ServicesScreen, IntroScreen, ReviewingScreen });
+</script>
+
+<script type="text/babel">
+/* ================= 浅色页 Step1: 问卷 (渐进展示 + 联动置灰 + 统一提示) ================= */
+function QuizScreenLegacy({ onBack, onClose, onSubmit, showToast }) {
+  const [exp, setExp] = useState(null);          // 1.1 主问题
+  const [years, setYears] = useState(null);      // 1.1 经验年限
+  const [freq, setFreq] = useState(null);        // 1.1 每日频率
+  const [algo, setAlgo] = useState(null);        // 1.2 自动化经验
+  const [algoStrats, setAlgoStrats] = useState([]); // 1.2 策略类型
+  const [goals, setGoals] = useState([]);        // 3.1 投资目标
+  const [risk, setRisk] = useState(null);        // 3.2 风险承受能力
+  const [leverage, setLeverage] = useState(null);// 3.3 杠杆
+  const [deriv, setDeriv] = useState(null);      // 3.3 衍生品
+  const [strats, setStrats] = useState([]);      // 4.1 策略类型
+  const [otherText, setOtherText] = useState('');
+
+  const hasExp = exp === 'ended' || exp === 'using';
+  const hasAlgo = algo === 'ended' || algo === 'using';
+  const toggle = (arr, setArr, v) => setArr(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
+
+  // —— 联动置灰规则 (MVP 硬编码) ——
+  const lowExp = !hasExp || (years && ['无', '6个月以下', '6个月-1年'].includes(years)); // 规则② (无经验视同不足1年)
+  const hfMmDisabled41 = lowExp || goals.includes('长期资本增值');                        // 规则② + ④
+  const hfDisabled12 = freq && ['无', '1-10笔', '10-50笔'].includes(freq);               // 规则③
+  const q33YesDisabled = risk === '平衡型';                                              // 规则⑥
+  const riskWarn = risk === '保守型' || risk === '稳健型';                               // 规则⑤ 选中提示
+
+  const GreyNote = () => (
+    <div style={{ fontSize: 11, color: TK.muted, lineHeight: 1.5, marginTop: -2, marginBottom: 4 }}>
+      ⓘ 部分选项与已选答案存在逻辑冲突，已置灰 — {FAIL_HINT}
+    </div>
+  );
+
+  const complete = exp && goals.length > 0 && risk && leverage && deriv && strats.length > 0
+    && (!hasExp || (years && freq && algo && (!hasAlgo || algoStrats.length > 0)))
+    && (!strats.includes('其他') || otherText.trim().length > 0);
+
+  const submit = () => {
+    if (!complete) { showToast('请完成所有必答题'); return; }
+    const manual = strats.includes('其他') || algoStrats.includes('其他');
+    onSubmit(manual ? 'manual' : 'auto');
+  };
+
+  return (
+    <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <LightNav title="适当性调查问卷" step={1} total={2} onBack={tryExit} onClose={tryExit} />
+      <div style={{ flex: 1, padding: '16px 20px 24px' }}>
+        <div style={{ fontSize: 11, color: TK.muted, background: TK.surfaceStrong, borderRadius: 8, padding: '8px 12px', marginBottom: 20 }}>
+          Demo 节选题目，用于演示：1.1 渐进展示 · 联动置灰 · 统一提示 ·「其他」转人工。正式问卷以 202608 final 版为准（繁中）。
+        </div>
+
+        <QGroup title="1.1 您是否有過使用 API 進行證券交易的經驗？">
+          {['无', '有，但已终止', '有，目前正在使用'].map(v => (
+            <Option key={v} label={v} selected={exp === v} onClick={() => { setExp(v); if (v === '无') { setYears(null); setFreq(null); setAlgo(null); setAlgoStrats([]); } }} />
+          ))}
+        </QGroup>
+
+        {hasExp && (
+          <React.Fragment>
+            <QGroup title="1.1.1 使用經驗年限">
+              {['无', '6个月以下', '6个月-1年', '1-3年', '3年以上'].map(v => (
+                <Option key={v} label={v} selected={years === v} onClick={() => setYears(v)} />
+              ))}
+            </QGroup>
+            <QGroup title="1.1.2 您過往通過 API 進行的平均每日交易頻率">
+              {['无', '1-10笔', '10-50笔', '50-200笔', '200笔以上'].map(v => (
+                <Option key={v} label={v} selected={freq === v} onClick={() => setFreq(v)} />
+              ))}
+            </QGroup>
+            <QGroup title="1.2 您是否有過使用自動化交易策略或算法交易的經驗？">
+              {['无', '有，但已终止', '有，目前正在使用'].map(v => (
+                <Option key={v} label={v} selected={algo === v} onClick={() => { setAlgo(v); if (v === '无') setAlgoStrats([]); }} />
+              ))}
+            </QGroup>
+            {hasAlgo && (
+              <QGroup title="1.2.1 曾使用的策略類型（可多選）">
+                {hfDisabled12 && <GreyNote />}
+                {['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '其他'].map(v => (
+                  <Option key={v} multi label={v} selected={algoStrats.includes(v)}
+                    disabled={v === '高频交易' && hfDisabled12}
+                    onClick={() => toggle(algoStrats, setAlgoStrats, v)} />
+                ))}
+              </QGroup>
+            )}
+          </React.Fragment>
+        )}
+
+        <QGroup title="3.1 您開通 API 交易的主要投資目標（可多選）">
+          {['长期资本增值', '短期交易获利', '套利', '做市', '资产配置', '其他'].map(v => (
+            <Option key={v} multi label={v} selected={goals.includes(v)} onClick={() => toggle(goals, setGoals, v)} />
+          ))}
+        </QGroup>
+
+        <QGroup title="3.2 您的風險承受能力評級">
+          {riskWarn && (
+            <div style={{ background: 'rgba(207,32,47,0.06)', border: '1px solid rgba(207,32,47,0.25)', borderRadius: 10, padding: '9px 12px', fontSize: 12, color: TK.down, marginBottom: 10 }}>
+              ⚠ {FAIL_HINT}
+            </div>
+          )}
+          {['保守型（不愿承担任何本金损失）', '稳健型（可接受小幅波动）', '平衡型', '进取型', '激进型'].map(v => {
+            const key = v.slice(0, 3);
+            return <Option key={v} label={v} selected={risk === key} onClick={() => setRisk(key)} />;
+          })}
+        </QGroup>
+
+        <QGroup title="3.3 您是否計劃通過 API 進行槓桿交易 / 交易衍生產品？">
+          {q33YesDisabled && <GreyNote />}
+          {[['leverage', '计划杠杆交易', leverage, setLeverage], ['deriv', '计划交易衍生产品', deriv, setDeriv]].map(([k, label, val, setVal]) => (
+            <div key={k} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: TK.body, marginBottom: 6 }}>{label}</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {['是', '否'].map(v => (
+                  <button key={v} disabled={v === '是' && q33YesDisabled}
+                    onClick={() => setVal(v)}
+                    style={{
+                      flex: 1, height: 44, borderRadius: 12, fontSize: 14,
+                      border: `1.5px solid ${val === v ? TK.blue : TK.hairlineSoft}`,
+                      background: (v === '是' && q33YesDisabled) ? TK.surfaceStrong : (val === v ? 'rgba(0,82,255,0.04)' : TK.canvas),
+                      color: (v === '是' && q33YesDisabled) ? TK.mutedSoft : (val === v ? TK.blue : TK.ink),
+                      cursor: (v === '是' && q33YesDisabled) ? 'not-allowed' : 'pointer',
+                      fontWeight: val === v ? 600 : 400,
+                    }}>{v}{v === '是' && q33YesDisabled ? '（不可选）' : ''}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </QGroup>
+
+        <QGroup title="4.1 計劃通過 API 執行的策略類型（可多選）" note="選擇「做市」或「高頻交易」的客戶，開通後將被納入重點關注">
+          {hfMmDisabled41 && <GreyNote />}
+          {['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '统计套利', '机器学习驱动', '其他'].map(v => (
+            <Option key={v} multi label={v} selected={strats.includes(v)}
+              disabled={(v === '做市' || v === '高频交易') && hfMmDisabled41}
+              onClick={() => toggle(strats, setStrats, v)} />
+          ))}
+          {strats.includes('其他') && (
+            <React.Fragment>
+              <input value={otherText} onChange={e => setOtherText(e.target.value)}
+                placeholder="請簡要描述您的策略（必填）"
+                style={{ width: '100%', height: 48, borderRadius: 12, border: `1.5px solid ${TK.hairlineSoft}`, padding: '0 14px', fontSize: 14, marginTop: 4 }} />
+              <div style={{ fontSize: 11, color: TK.yellow, marginTop: 8, background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
+                選擇「其他」並填寫自定義內容，申請將進入人工審核（預計 1-3 個工作日）
+              </div>
+            </React.Fragment>
+          )}
+        </QGroup>
+      </div>
+      <FormFooter backText="上一步" nextText="提交" onBack={onBack} onNext={submit} />
+    </div>
+  );
+}
+
+/* ================= 浅色页 Step2: 协议签署 (勾选 + 全文入口) ================= */
+const DOCS = [
+  {
+    id: 'a', title: '交易适当性补充协议', version: 'v0.9（草案）', pages: 6,
+    body: [
+      '本協議為《證券交易服務協議》之補充協議，適用於客戶通過應用程式介面（API）使用本公司交易服務之情形。',
+      '客戶確認，所有通過 API 下達之交易指令均由客戶自主觸發，本公司僅作為訂單路由通道接收、校驗並轉發指令至交易所，不提供任何自動化交易策略或算法托管服務。',
+      '客戶須妥善保管其 APIKey 及 APISecret，因保管不善導致之一切損失由客戶自行承擔。',
+      '（草案文本，以法務最終發布版本為準）',
+    ],
+  },
+  {
+    id: 'b', title: 'API交易風險披露聲明', version: 'v1.0', pages: 4,
+    body: [
+      '本聲明旨在確保客戶在申請開通及使用應用程式介面（API）交易服務前，已充分閱讀、理解並知悉透過 API 進行證券交易可能涉及的各項潛在風險。',
+      '3.1 技術系統風險：API 系統、伺服器或相關基礎設施可能因技術故障、網絡擁塞、例行維護或不可預見之事故而暫停服務或出現延遲，導致交易指令無法及時下達、修改或執行。',
+      '3.2 交易執行風險：自動化交易策略可能在市場條件突變時於不利價位執行，或因程序邏輯錯誤產生未經授權或非預期之交易指令。',
+      '3.4 網絡安全與資料風險：API 密鑰（API Keys）、訪問令牌或認證憑證若因保管不善、惡意軟件或社會工程學手段被竊取，將導致賬戶被非法操控。',
+      '本人／本機構已仔細閱讀並充分理解本聲明之全部內容，並自願承擔因使用本服務而產生之所有潛在損失及法律責任。',
+    ],
+  },
+];
+
+function AgreementScreen({ onBack, onClose, onNext }) {
+  const [checked, setChecked] = useState({});
+  const [openDoc, setOpenDoc] = useState(null);
+  const allChecked = DOCS.every(d => checked[d.id]);
+  return (
+    <div style={{ background: TK.canvas, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <LightNav title="协议签署" step={2} total={2} onBack={onBack} onClose={onClose} />
+      <div style={{ flex: 1, padding: '20px 20px 24px' }}>
+        {DOCS.map(d => (
+          <div key={d.id} style={{ border: `1.5px solid ${checked[d.id] ? TK.blue : TK.hairlineSoft}`, borderRadius: 16, padding: '16px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink }}>《{d.title}》</div>
+              <button onClick={() => setOpenDoc(d)} style={{ color: TK.blue, fontSize: 13, fontWeight: 500, padding: '6px 0 6px 12px' }}>查看全文 ›</button>
+            </div>
+            <CheckItem checked={!!checked[d.id]} onToggle={() => setChecked({ ...checked, [d.id]: !checked[d.id] })}
+              label={d.id === 'a'
+                ? '本人已閱讀、理解並同意《交易適當性補充協議》之全部內容。'
+                : '本人已閱讀並充分理解《API交易風險披露聲明》之全部內容，自願承擔使用本服務之潛在損失及法律責任。'} />
+          </div>
+        ))}
+      </div>
+      <FormFooter backText="上一步" nextText="完成签署并开通" onBack={onBack} onNext={onNext} nextDisabled={!allChecked} />
+      {openDoc && <DocModal doc={openDoc} onClose={() => setOpenDoc(null)} />}
+    </div>
+  );
+}
+
+/* ================= 浅色页 Step3: IP 白名单 ================= */
+function IpScreen({ ips, setIps, onBack, onClose, onNext, showToast }) {
+  const [val, setVal] = useState('');
+  const valid = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(val.trim());
+  const add = () => {
+    if (!valid) { showToast('IP 格式不正确'); return; }
+    if (ips.includes(val.trim())) { showToast('该 IP 已添加'); return; }
+    if (ips.length >= 3) { showToast('单个 Key 最多绑定 3 个 IP'); return; }
+    setIps([...ips, val.trim()]); setVal('');
+  };
+  return (
+    <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <LightNav title="IP 白名单" step={3} total={4} onBack={onBack} onClose={onClose} />
+      <div style={{ flex: 1, padding: '20px 20px 24px' }}>
+        <div style={{ fontSize: 13, color: TK.body, lineHeight: 1.7, marginBottom: 18 }}>
+          请填写<span style={{ fontWeight: 600 }}>运行 API 程序的服务器 / 电脑</span>的公网 IP，该 IP 将绑定你的首个 API Key，API 请求仅允许来自白名单 IP。单个 Key 最多绑定 3 个 IP，本期暂不支持 IP 段。
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+          <input value={val} onChange={e => setVal(e.target.value)} placeholder="手动输入 IP"
+            style={{ flex: 1, height: 48, borderRadius: 12, border: `1.5px solid ${TK.hairlineSoft}`, padding: '0 14px', fontSize: 14, fontFamily: TK.mono, background: TK.canvas }} />
+          <button onClick={add} style={{ width: 88, height: 48, borderRadius: 100, background: TK.canvas, border: `1.5px solid ${TK.blue}`, color: TK.blue, fontSize: 14, fontWeight: 600 }}>添加</button>
+        </div>
+        {ips.map(ip => (
+          <div key={ip} style={{ display: 'flex', alignItems: 'center', background: TK.canvas, border: `1px solid ${TK.hairlineSoft}`, borderRadius: 12, padding: '13px 14px', marginBottom: 8 }}>
+            <span style={{ fontFamily: TK.mono, fontSize: 14, color: TK.ink }}>{ip}</span>
+            <span style={{ marginLeft: 'auto', color: TK.muted, fontSize: 12, cursor: 'pointer' }} onClick={() => setIps(ips.filter(x => x !== ip))}>删除</span>
+          </div>
+        ))}
+        {ips.length === 0 && (
+          <div style={{ textAlign: 'center', color: TK.mutedSoft, fontSize: 12, padding: '28px 0' }}>至少添加 1 个 IP</div>
+        )}
+      </div>
+      <FormFooter backText="上一步" nextText="下一步" onBack={onBack} onNext={onNext} nextDisabled={ips.length === 0} />
+    </div>
+  );
+}
+
+/* ================= 浅色页 Step4: 确认提交 ================= */
+function ConfirmScreen({ ips, keyName, setKeyName, onBack, onClose, onConfirm }) {
+  const rows = [
+    ['签署文件', '《交易适当性补充协议》v0.9\n《API交易風險披露聲明》v1.0'],
+    ['IP 白名单', ips.join('、')],
+  ];
+  return (
+    <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <LightNav title="确认开通" step={4} total={4} onBack={onBack} onClose={onClose} />
+      <div style={{ flex: 1, padding: '20px 20px 24px' }}>
+        <div style={{ background: TK.canvas, borderRadius: 16, padding: '6px 18px', marginBottom: 16 }}>
+          {rows.map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '14px 0', borderBottom: `1px solid ${TK.hairlineSoft}` }}>
+              <span style={{ fontSize: 13, color: TK.muted, flexShrink: 0 }}>{k}</span>
+              <span style={{ fontSize: 13, color: TK.ink, textAlign: 'right', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{v}</span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '14px 0', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: TK.muted, flexShrink: 0 }}>API Key 名称</span>
+            <input value={keyName} onChange={e => setKeyName(e.target.value)} maxLength={20}
+              style={{ textAlign: 'right', fontSize: 13, color: TK.ink, border: 'none', borderBottom: `1.5px solid ${TK.hairlineSoft}`, padding: '4px 2px', width: 170, background: 'transparent' }} />
+          </div>
+        </div>
+      </div>
+      <FormFooter backText="上一步" nextText="确认开通" onBack={onBack} onNext={onConfirm} />
+    </div>
+  );
+}
+
+/* ================= 浅色页 Step5: 开通成功 (Secret 仅此一次) ================= */
+const DEMO_KEY = { key: 'yk_live_9f3Kd72mQx18n4sVwB', secret: 'sk_demo_4f9c2e7a1b8d3f6a5c0e9b2d7f4a6c1e' };
+
+function SuccessScreen({ ip, onDone, showToast }) {
+  const [saved, setSaved] = useState(false);
+  const copy = async (t) => {
+    try { await navigator.clipboard.writeText(t); } catch (e) {}
+    showToast('已复制');
+  };
+  return (
+    <div style={{ background: TK.canvas, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, padding: '36px 22px 24px' }}>
+        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(5,177,105,0.1)', color: TK.up, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, margin: '0 auto 14px' }}>✓</div>
+        <div style={{ textAlign: 'center', fontSize: 20, fontWeight: 600, color: TK.ink, marginBottom: 6 }}>开通成功</div>
+        <div style={{ textAlign: 'center', fontSize: 13, color: TK.muted, marginBottom: 26 }}>API 交易服务已为你的账户开通</div>
+
+        {[['APIKey', DEMO_KEY.key], ['APISecret', DEMO_KEY.secret]].map(([k, v]) => (
+          <div key={k} style={{ background: TK.surfaceSoft, borderRadius: 14, padding: '14px 16px', marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, color: TK.muted }}>{k}</span>
+              <button onClick={() => copy(v)} style={{ color: TK.blue, fontSize: 12, fontWeight: 600 }}>复制</button>
+            </div>
+            <div style={{ fontFamily: TK.mono, fontSize: 13, color: TK.ink, wordBreak: 'break-all', lineHeight: 1.6 }}>{v}</div>
+          </div>
+        ))}
+        <div style={{ background: 'rgba(207,32,47,0.06)', border: '1px solid rgba(207,32,47,0.25)', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: TK.down, lineHeight: 1.6, marginBottom: 14 }}>
+          APISecret 仅此一次明文展示，离开本页后将无法再次查看，请立即妥善保存。
+        </div>
+        <div style={{ fontSize: 12, color: TK.muted, marginBottom: 20 }}>
+          绑定 IP：<span style={{ fontFamily: TK.mono, color: TK.ink }}>{ip}</span>
+        </div>
+        <CheckItem checked={saved} onToggle={() => setSaved(!saved)} label="我已妥善保存 APISecret，知晓其不会再次展示。" />
+        <div style={{ marginTop: 18 }}>
+          <button style={{ color: TK.blue, fontSize: 13 }}>查看接入文档 ›</button>
+        </div>
+      </div>
+      <div style={{ padding: '12px 20px 22px' }}>
+        <button onClick={onDone} disabled={!saved} style={{
+          width: '100%', height: 50, borderRadius: 100, fontSize: 16, fontWeight: 600,
+          background: saved ? TK.blue : TK.blueDisabled, color: '#fff', cursor: saved ? 'pointer' : 'not-allowed',
+        }}>完成</button>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { AgreementScreen, IpScreen, ConfirmScreen, SuccessScreen, DOCS, DEMO_KEY });
+</script>
+
+<script type="text/babel">
+/* ================= 深色页: 管理页 (已开通 / 已暂停) ================= */
+function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, onNewKey, onRenameKey, onTerminate, showToast }) {
+  const [confirm, setConfirm] = useState(null);   // {type:'delete'|'terminate', id}
+  const [pwdAction, setPwdAction] = useState(null); // {title, sub, run}
+  const [newSecret, setNewSecret] = useState(null); // {name, key, secret}
+  const [savedNew, setSavedNew] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [newKeyOpen, setNewKeyOpen] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftIps, setDraftIps] = useState([]);
+  const [draftVal, setDraftVal] = useState('');
+  const KEY_LIMIT = 3;
+
+  const copyText = async (t, msg) => { try { await navigator.clipboard.writeText(t); } catch (e) {} showToast(msg || '已复制'); };
+
+  const scrollTop = () => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; };
+  const askPwd = (title, sub, run) => { scrollTop(); setPwdAction({ title, sub, run }); };
+
+  const infoRows = [
+    ['接入文档', 'OpenAPI 开发者文档与 SDK'],
+    ['行情权限', '美股等部分品种实时行情需购买行情卡 → 行情商城'],
+  ];
+
+  return (
+    <div style={{ background: TK.dark, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <DarkNav title="API 交易" onBack={onBack} />
+      <div style={{ flex: 1, padding: '4px 16px 24px' }}>
+
+        {suspended && (
+          <div style={{ background: 'rgba(207,32,47,0.12)', border: '1px solid rgba(207,32,47,0.35)', borderRadius: 14, padding: '14px 16px', marginBottom: 12 }}>
+            <div style={{ color: '#ff6b75', fontSize: 14, fontWeight: 600, marginBottom: 4 }}>服务已被暂停</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}>因风控触发，你的 API 交易服务已被暂停。当前仅支持只读查看，恢复请联系客服或风控复核。</div>
+            <button onClick={() => showToast('跳转客服（Demo）')} style={{ color: TK.blueOnDark, fontSize: 12, fontWeight: 600 }}>联系客服 ›</button>
+          </div>
+        )}
+
+        {/* ticket 状态卡：0 Key 时为「未生效」态 */}
+        <div style={{
+          background: TK.darkCard, borderRadius: 16, padding: '16px 18px', marginBottom: 12,
+          opacity: suspended ? 0.5 : 1,
+          border: (keys.length > 0 && !ticket.valid) ? `1px solid rgba(244,176,0,0.45)` : 'none',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>交易会话（ticket）</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: keys.length === 0 ? TK.mutedSoft : (ticket.valid ? TK.up : TK.yellow) }}>
+              {keys.length === 0 ? '● 未生效' : (ticket.valid ? '● 有效' : '● 已过期')}
+            </span>
+          </div>
+          {keys.length === 0 ? (
+            <div style={{ color: TK.mutedSoft, fontSize: 12 }}>创建 API Key 并发起首次连接后生效</div>
+          ) : (
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: ticket.valid ? 0 : 12 }}>到期时间 <span style={{ fontFamily: TK.mono, color: '#fff' }}>{ticket.expiry}</span></div>
+          )}
+          {keys.length > 0 && !ticket.valid && !suspended && (
+            <React.Fragment>
+              <div style={{ color: TK.yellow, fontSize: 11, marginBottom: 10, lineHeight: 1.5 }}>会话已过期，API 交易调用将被拒绝，续期后恢复。</div>
+              <button onClick={() => askPwd('验证交易密码', '续期交易会话（ticket）', onRenew)}
+                style={{ height: 38, padding: '0 18px', borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 13, fontWeight: 600 }}>去续期</button>
+            </React.Fragment>
+          )}
+        </div>
+
+        {/* Key 列表 */}
+        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, margin: '16px 2px 10px' }}>API Key（{keys.length}/{KEY_LIMIT}）</div>
+        {keys.map(k => {
+          const kp = suspended || k.paused;
+          return (
+          <div key={k.id} style={{ background: TK.darkCard, borderRadius: 16, padding: '14px 16px', marginBottom: 10, opacity: kp ? 0.55 : 1, border: k.paused ? `1px solid rgba(244,176,0,0.4)` : 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              {editingId === k.id ? (
+                <input autoFocus value={editName} onChange={e => setEditName(e.target.value)} maxLength={20}
+                  onBlur={() => {
+                    if (editName.trim() && editName.trim() !== k.name) { onRenameKey(k.id, editName.trim()); showToast('名称已更新'); }
+                    setEditingId(null);
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                  style={{ background: TK.dark, border: `1px solid ${TK.blueOnDark}`, borderRadius: 8, color: '#fff', fontSize: 13, padding: '5px 8px', width: 170 }} />
+              ) : (
+                <span style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
+                  <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>{k.name}</span>
+                  {!kp && <button onClick={() => { setEditingId(k.id); setEditName(k.name); }} style={{ color: TK.mutedSoft, fontSize: 13, padding: 2 }}>✎</button>}
+                </span>
+              )}
+              <span style={{ fontSize: 10, color: kp ? TK.yellow : TK.up, border: `1px solid ${kp ? TK.yellow : TK.up}`, borderRadius: 100, padding: '1px 8px' }}>{kp ? '已暂停' : '正常'}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontFamily: TK.mono, fontSize: 12, color: TK.onDarkSoft }}>{k.key.slice(0, 7)}••••••••{k.key.slice(-4)}</span>
+              <button onClick={() => copyText(k.key, 'APIKey 已复制')} style={{ color: TK.blueOnDark, fontSize: 11, fontWeight: 600 }}>复制</button>
+            </div>
+            <div style={{ color: TK.mutedSoft, fontSize: 11, lineHeight: 1.7 }}>
+              绑定 IP <span style={{ fontFamily: TK.mono }}>{k.ip}</span> · 创建于 {k.created}
+            </div>
+            {k.paused && !suspended && (
+              <div style={{ color: TK.yellow, fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>该 Key 已被风控暂停，仅支持只读查看；恢复请联系客服或风控复核。</div>
+            )}
+            {!kp && (
+              <div style={{ textAlign: 'right', marginTop: 6 }}>
+                <button onClick={() => { scrollTop(); setConfirm({ type: 'delete', id: k.id }); }} style={{ color: '#ff6b75', fontSize: 12 }}>删除</button>
+              </div>
+            )}
+          </div>
+          );
+        })}
+        {!suspended && keys.length === 0 && (
+          <div style={{ background: TK.darkCard, borderRadius: 16, padding: '24px 20px', textAlign: 'center', marginBottom: 10 }}>
+            <div style={{ color: '#fff', fontSize: 15, fontWeight: 600, marginBottom: 6 }}>创建你的首个 API Key</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.7 }}>设置名称并绑定 IP 白名单后创建；APISecret 仅在创建时展示一次，请当场保存，如遗失可删除后新建。</div>
+          </div>
+        )}
+        {!suspended && (
+          <button disabled={keys.length >= KEY_LIMIT}
+            onClick={() => { setDraftName('API Key ' + (keys.length + 1)); setDraftIps([]); setDraftVal(''); scrollTop(); setNewKeyOpen(true); }}
+            style={{
+              width: '100%', height: 46, borderRadius: 14, fontSize: 13, fontWeight: 600, marginBottom: 6,
+              border: `1.5px dashed ${keys.length >= KEY_LIMIT ? TK.darkLine : TK.blueOnDark}`,
+              color: keys.length >= KEY_LIMIT ? TK.mutedSoft : TK.blueOnDark,
+              cursor: keys.length >= KEY_LIMIT ? 'not-allowed' : 'pointer',
+            }}>{keys.length >= KEY_LIMIT ? '＋ 新建 Key（已达数量上限 N=3）' : (keys.length === 0 ? '＋ 创建首个 API Key' : '＋ 新建 API Key')}</button>
+        )}
+
+        {/* 服务信息 */}
+        <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, margin: '16px 2px 10px' }}>服务信息</div>
+        <div style={{ background: TK.darkCard, borderRadius: 16, padding: '4px 16px', marginBottom: 12 }}>
+          {infoRows.map(([t, d]) => (
+            <div key={t} style={{ padding: '12px 0', borderBottom: `1px solid ${TK.darkLine}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{t}</span>
+                <span style={{ color: TK.mutedSoft, fontSize: 12 }}>›</span>
+              </div>
+              <div style={{ color: TK.onDarkSoft, fontSize: 11, lineHeight: 1.6, marginTop: 3 }}>{d}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* 注销 */}
+        {!suspended && (
+          <div style={{ textAlign: 'center', padding: '10px 0 6px' }}>
+            <button onClick={() => { scrollTop(); setConfirm({ type: 'terminate' }); }} style={{ color: TK.mutedSoft, fontSize: 13 }}>注销 API 交易服务</button>
+          </div>
+        )}
+      </div>
+
+      {confirm && (
+        <ConfirmModal
+          title={confirm.type === 'delete' ? '删除此 API Key？' : '注销 API 交易服务？'}
+          lines={confirm.type === 'delete'
+            ? ['删除后该 Key 立即失效，不可恢复。使用该 Key 的程序将无法再调用接口。', '需验证交易密码以确认操作。']
+            : ['注销后全部 API Key 立即失效，重新使用需重新申请并通过审核。', '需验证交易密码以确认操作。']}
+          danger confirmText={confirm.type === 'delete' ? '确认删除' : '确认注销'}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            const c = confirm; setConfirm(null);
+            askPwd('验证交易密码', c.type === 'delete' ? '删除 API Key' : '注销 API 交易服务', () => {
+              if (c.type === 'delete') { onDeleteKey(c.id); showToast('Key 已删除'); }
+              else onTerminate();
+            });
+          }} />
+      )}
+      {pwdAction && (
+        <PasswordModal title={pwdAction.title} sub={pwdAction.sub}
+          onClose={() => setPwdAction(null)}
+          onSuccess={() => { const r = pwdAction.run; setPwdAction(null); r && r(); }} />
+      )}
+      {newKeyOpen && (
+        <PhoneOverlay>
+          <div onClick={() => setNewKeyOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.5)', animation: 'fadeIn 0.2s' }} />
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: TK.darkCard, borderRadius: '20px 20px 0 0', padding: '18px 20px 24px', animation: 'sheetUp 0.28s ease', maxHeight: '82%', overflow: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <span style={{ color: '#fff', fontSize: 16, fontWeight: 600 }}>新建 API Key</span>
+              <button onClick={() => setNewKeyOpen(false)} style={{ color: TK.mutedSoft, fontSize: 18, padding: 4 }}>✕</button>
+            </div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: 6 }}>API Key 名称</div>
+            <input value={draftName} onChange={e => setDraftName(e.target.value)} maxLength={20}
+              style={{ width: '100%', height: 46, borderRadius: 12, background: TK.dark, border: `1px solid ${TK.darkLine}`, color: '#fff', fontSize: 14, padding: '0 14px', marginBottom: 16 }} />
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: 6, lineHeight: 1.5 }}>绑定 IP 白名单（运行 API 程序的服务器/电脑公网 IP，最多 3 个）</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input value={draftVal} onChange={e => setDraftVal(e.target.value)} placeholder="手动输入 IP"
+                style={{ flex: 1, height: 44, borderRadius: 12, background: TK.dark, border: `1px solid ${TK.darkLine}`, color: '#fff', fontSize: 13, fontFamily: TK.mono, padding: '0 12px' }} />
+              <button onClick={() => {
+                const v = draftVal.trim();
+                if (!/^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(v)) { showToast('IP 格式不正确'); return; }
+                if (draftIps.includes(v)) { showToast('该 IP 已添加'); return; }
+                if (draftIps.length >= 3) { showToast('单个 Key 最多绑定 3 个 IP'); return; }
+                setDraftIps([...draftIps, v]); setDraftVal('');
+              }} style={{ width: 76, height: 44, borderRadius: 100, border: `1.5px solid ${TK.blueOnDark}`, color: TK.blueOnDark, fontSize: 13, fontWeight: 600 }}>添加</button>
+            </div>
+            {draftIps.map(ip => (
+              <div key={ip} style={{ display: 'flex', alignItems: 'center', background: TK.dark, borderRadius: 10, padding: '10px 12px', marginBottom: 6 }}>
+                <span style={{ fontFamily: TK.mono, fontSize: 13, color: '#fff' }}>{ip}</span>
+                <span style={{ marginLeft: 'auto', color: TK.mutedSoft, fontSize: 12, cursor: 'pointer' }} onClick={() => setDraftIps(draftIps.filter(x => x !== ip))}>删除</span>
+              </div>
+            ))}
+            <div style={{ color: TK.mutedSoft, fontSize: 11, lineHeight: 1.6, margin: '10px 0 16px' }}>创建后 APISecret 仅展示一次，请当场保存；如遗失可删除后新建。</div>
+            <button disabled={!draftName.trim() || draftIps.length === 0}
+              onClick={() => {
+                const ips0 = draftIps.join('、');
+                const name0 = draftName.trim();
+                setNewKeyOpen(false);
+                askPwd('验证交易密码', '创建新的 API Key', () => {
+                  const nk = { id: 'k' + Date.now(), name: name0, key: 'yk_live_new' + Math.random().toString(36).slice(2, 10) + 'X9q', secret: 'sk_demo_' + Math.random().toString(36).slice(2, 18) + Math.random().toString(36).slice(2, 8), ip: ips0, created: '2026-08-25' };
+                  setNewSecret(nk); setSavedNew(false);
+                });
+              }}
+              style={{ width: '100%', height: 48, borderRadius: 100, fontSize: 15, fontWeight: 600, background: (!draftName.trim() || draftIps.length === 0) ? TK.darkLine : TK.blue, color: '#fff' }}>验证交易密码并创建</button>
+          </div>
+        </PhoneOverlay>
+      )}
+      {newSecret && (
+        <PhoneOverlay>
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.55)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28, animation: 'fadeIn 0.2s' }}>
+          <div style={{ width: '100%', background: TK.canvas, borderRadius: 20, padding: '22px 20px', animation: 'sheetUp 0.25s ease' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: TK.ink, marginBottom: 4 }}>{newSecret.name} 创建成功</div>
+            <div style={{ fontSize: 11, color: TK.muted, marginBottom: 4 }}>绑定 IP <span style={{ fontFamily: TK.mono }}>{newSecret.ip}</span></div>
+            <div style={{ fontSize: 11, color: TK.down, marginBottom: 12 }}>APISecret 仅此一次展示，请立即保存；如遗失可删除后新建</div>
+            {[['APIKey', newSecret.key], ['APISecret', newSecret.secret]].map(([label, val]) => (
+              <div key={label} style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: TK.muted }}>{label}</span>
+                  <button onClick={() => copyText(val, label + ' 已复制')} style={{ color: TK.blue, fontSize: 11, fontWeight: 600 }}>复制</button>
+                </div>
+                <div style={{ fontFamily: TK.mono, fontSize: 12, color: TK.ink, wordBreak: 'break-all', lineHeight: 1.6, background: TK.surfaceSoft, borderRadius: 10, padding: '10px 12px', marginTop: 4 }}>{val}</div>
+              </div>
+            ))}
+            <CheckItem checked={savedNew} onToggle={() => setSavedNew(!savedNew)} label="我已妥善保存 APISecret。" />
+            <button disabled={!savedNew} onClick={() => { onNewKey(newSecret); setNewSecret(null); showToast('新 Key 已创建'); }}
+              style={{ width: '100%', height: 44, borderRadius: 100, marginTop: 14, fontSize: 15, fontWeight: 600, background: savedNew ? TK.blue : TK.blueDisabled, color: '#fff' }}>完成</button>
+          </div>
+        </div>
+        </PhoneOverlay>
+      )}
+    </div>
+  );
+}
+
+/* ================= PhoneApp: 状态机 ================= */
+function PhoneApp({ status, setStatus, screen, setScreen, showToast, ticket, setTicket, keys, setKeys }) {
+  const [pwd, setPwd] = useState(null);
+  const [rejected, setRejected] = useState(false);
+
+  const enterApi = () => {
+    if (status === 'none') setScreen('intro');
+    else if (status === 'reviewing') setScreen('reviewing');
+    else setScreen('manage');
+  };
+
+  const openSuccess = () => {
+    setStatus('opened');
+    setScreen('manage');
+    showToast('开通成功，请创建你的首个 API Key');
+  };
+
+  const screens = {
+    services: <ServicesScreen onEnter={enterApi} />,
+    intro: <IntroScreen rejected={rejected} onBack={() => setScreen('services')} onApply={() => { setRejected(false); setScreen('quiz'); }} />,
+    reviewing: <ReviewingScreen onBack={() => setScreen('services')}
+      onPass={() => { showToast('审核通过（模拟）'); setScreen('agreement'); }}
+      onReject={() => { setStatus('none'); setRejected(true); setScreen('intro'); }} />,
+    quiz: <QuizScreen onBack={() => setScreen('intro')} onClose={() => setScreen('intro')} showToast={showToast}
+      onSubmit={(r) => {
+        if (r === 'manual') { setStatus('reviewing'); setScreen('reviewing'); }
+        else { showToast('逻辑校验通过 · 自动审核'); setScreen('agreement'); }
+      }} />,
+    agreement: <AgreementScreen onBack={() => setScreen('quiz')} onClose={() => setScreen('intro')}
+      onNext={() => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; setPwd(true); }} />,
+    manage: <ManageScreen suspended={status === 'suspended'} keys={keys} ticket={ticket}
+      onBack={() => setScreen('services')} showToast={showToast}
+      onRenew={() => { setTicket({ valid: true, expiry: '2026-09-08 23:59' }); showToast('续期成功，有效期至 2026-09-08'); }}
+      onDeleteKey={(id) => setKeys(keys.filter(k => k.id !== id))}
+      onNewKey={(nk) => setKeys([...keys, nk])}
+      onRenameKey={(id, name) => setKeys(keys.map(k => k.id === id ? { ...k, name } : k))}
+      onTerminate={() => { setStatus('none'); setKeys([]); setScreen('intro'); showToast('已注销 API 交易服务'); }} />,
+  };
+
+  return (
+    <div style={{ position: 'relative', minHeight: '100%', background: (screen === 'services' || screen === 'intro' || screen === 'manage' || screen === 'reviewing') ? TK.dark : TK.canvas }}>
+      {screens[screen]}
+      {pwd && (
+        <PasswordModal title="验证交易密码" sub="完成协议签署并开通 API 交易服务（签署留痕）"
+          onClose={() => setPwd(false)}
+          onSuccess={() => { setPwd(false); openSuccess(); }} />
+      )}
+    </div>
+  );
+}
+
+/* ================= App 外壳: 评审面板 + iPhone ================= */
+const SCENARIOS = [
+  ['none', '未开通'], ['reviewing', '审核中'], ['opened', '已开通'], ['suspended', '已暂停'],
+];
+const FLOW = [
+  ['services', '全部服务（入口）'], ['intro', 'API 交易 · 介绍页'], ['quiz', 'Step1 问卷'],
+  ['agreement', 'Step2 协议签署（签署即开通）'], ['manage', '管理页 / 创建 Key'], ['reviewing', '审核中'],
+];
+
+function App() {
+  const [status, setStatusRaw] = useState('none');
+  const [screen, setScreenRaw] = useState('services');
+  const [ticket, setTicket] = useState({ valid: true, expiry: '2026-09-01 23:59' });
+  const [keys, setKeys] = useState([]);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const showToast = (t) => {
+    setToast(t);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  };
+  const setStatus = (s) => { setStatusRaw(s); };
+  const setScreen = (s) => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; setScreenRaw(s); };
+  const jumpScenario = (s) => {
+    setStatusRaw(s);
+    if ((s === 'opened' || s === 'suspended') && keys.length === 0) {
+      setKeys([{ id: 'k1', name: 'API Key 1', key: DEMO_KEY.key, secret: DEMO_KEY.secret, ip: '203.0.113.10', created: '2026-08-25' }]);
+    }
+    if (s === 'none') setScreen('intro');
+    else if (s === 'reviewing') setScreen('reviewing');
+    else setScreen('manage');
+  };
+
+  const panelStyles = {
+    wrap: { width: 300, flexShrink: 0, padding: '36px 0 36px 36px' },
+    card: { background: '#fff', borderRadius: 16, padding: 20, marginBottom: 14, boxShadow: '0 4px 12px rgba(0,0,0,0.04)' },
+    h: { fontSize: 12, fontWeight: 700, color: '#7c828a', letterSpacing: 1, marginBottom: 12 },
+  };
+
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'flex-start', justifyContent: 'center', gap: 40, padding: '24px 0' }}>
+      <div style={panelStyles.wrap}>
+        <div style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#0a0b0d' }}>云锋有鱼 · OpenAPI</div>
+          <div style={{ fontSize: 13, color: '#5b616e', marginTop: 4 }}>申请与管理 Flow Demo · 2026-08-25</div>
+          <div style={{ fontSize: 11, color: '#a8acb3', marginTop: 6, lineHeight: 1.6 }}>依据 2026-08-24 设计文档（8/25 更新）；视觉遵循 DESIGN-visual.md + APP 实际形态（深色主界面 / 浅色表单流）。</div>
+        </div>
+        <div style={panelStyles.card}>
+          <div style={panelStyles.h}>DEMO 场景（非产品 UI）</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {SCENARIOS.map(([v, label]) => (
+              <button key={v} onClick={() => jumpScenario(v)} style={{
+                height: 34, padding: '0 14px', borderRadius: 100, fontSize: 12, fontWeight: 600,
+                background: status === v ? '#0052ff' : '#eef0f3', color: status === v ? '#fff' : '#0a0b0d',
+              }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#a8acb3', margin: '12px 0 6px' }}>ticket 状态模拟（管理页可见）：</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[[true, '有效'], [false, '已过期']].map(([v, label]) => (
+              <button key={label} onClick={() => setTicket({ valid: v, expiry: v ? '2026-09-01 23:59' : '2026-08-24 23:59' })} style={{
+                height: 30, padding: '0 12px', borderRadius: 100, fontSize: 11, fontWeight: 600,
+                background: ticket.valid === v ? '#0a0b0d' : '#eef0f3', color: ticket.valid === v ? '#fff' : '#0a0b0d',
+              }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#a8acb3', margin: '12px 0 6px' }}>风控动作模拟（单 Key 暂停，中台已实现）：</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => {
+              if (keys.length === 0) setKeys([{ id: 'k1', name: 'API Key 1', key: DEMO_KEY.key, secret: DEMO_KEY.secret, ip: '203.0.113.10', created: '2026-08-25', paused: true }]);
+              else setKeys(keys.map((k, i) => i === 0 ? { ...k, paused: true } : k));
+              if (status === 'opened' || status === 'suspended') setScreen('manage');
+            }} style={{ height: 30, padding: '0 12px', borderRadius: 100, fontSize: 11, fontWeight: 600, background: keys[0] && keys[0].paused ? '#0a0b0d' : '#eef0f3', color: keys[0] && keys[0].paused ? '#fff' : '#0a0b0d' }}>暂停 Key 1</button>
+            <button onClick={() => setKeys(keys.map(k => ({ ...k, paused: false })))} style={{ height: 30, padding: '0 12px', borderRadius: 100, fontSize: 11, fontWeight: 600, background: '#eef0f3', color: '#0a0b0d' }}>恢复全部</button>
+          </div>
+          <div style={{ fontSize: 11, color: '#a8acb3', marginTop: 10, lineHeight: 1.6 }}>切换场景后直接落在对应主页；完整链路请从「未开通 → 立即申请」开始走。</div>
+        </div>
+        <div style={panelStyles.card}>
+          <div style={panelStyles.h}>流程跳转（非产品 UI）</div>
+          {FLOW.map(([v, label]) => (
+            <button key={v} onClick={() => setScreen(v)} style={{
+              display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8,
+              fontSize: 13, color: screen === v ? '#0052ff' : '#5b616e', fontWeight: screen === v ? 700 : 400,
+              background: screen === v ? 'rgba(0,82,255,0.06)' : 'transparent',
+            }}>{label}</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: '#a8acb3', lineHeight: 1.7, padding: '0 4px' }}>
+          演示要点（问卷为 202608 final 全量题目 + 8/25 结构化改造）：1.1 选「无」观察渐进隐藏子题与 1.2；经验不足 1 年（含无经验）或 3.1 选「长期资本增值」→ 4.1 做市/高频置灰；每日频率少于 50 笔 → 1.2 高频置灰；3.2 选「平衡型」→ 3.3「是」置灰，选「保守/稳健型」→ 警示；任一组选「其他」并填空 → 提交后转人工审核；回改先答题 → 冲突答案自动清除并提示「需重新确认」。选择「做市」或「高频交易」的客户，开通后将自动通知交易部/风险部/合规部（后台动作，页面不呈现）。确认提交页：API Key 名称可修改；「确认开通」唤起交易密码验证，一次验证同时完成协议签署留痕与创建首个 Key。
+        </div>
+      </div>
+
+      <div style={{ position: 'sticky', top: 24 }}>
+        <IosFrame darkMode time="9:41" battery={85}>
+          <PhoneApp status={status} setStatus={setStatus} screen={screen} setScreen={setScreen} showToast={showToast} ticket={ticket} setTicket={setTicket} keys={keys} setKeys={setKeys} />
+          <Toast text={toast} />
+        </IosFrame>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+<script type="text/babel">
+/* ================= Step1 问卷 v2: 全量题目 + 半屏选择器（对齐开户页面选择器形态） ================= */
+
+// 半屏选择器：单选点选即关，多选带确定栏；置灰选项不可点并附统一提示
+function SheetSelect({ title, options, multi, selected, disabledMap, onChange, onClose }) {
+  const anyDisabled = options.some(o => disabledMap && disabledMap[o]);
+  const sel = multi ? selected : (selected ? [selected] : []);
+  const tap = (v) => {
+    if (disabledMap && disabledMap[v]) return;
+    if (multi) onChange(sel.includes(v) ? sel.filter(x => x !== v) : [...sel, v]);
+    else { onChange(v); onClose(); }
+  };
+  return (
+    <PhoneOverlay>
+    <div style={{ position: 'absolute', inset: 0, zIndex: 50 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.5)', animation: 'fadeIn 0.2s' }} />
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '72%', background: TK.canvas, borderRadius: '20px 20px 0 0', display: 'flex', flexDirection: 'column', animation: 'sheetUp 0.28s ease' }}>
+        <div style={{ display: 'flex', alignItems: 'center', height: 52, padding: '0 10px', borderBottom: `1px solid ${TK.hairlineSoft}`, flexShrink: 0 }}>
+          <button onClick={onClose} style={{ fontSize: 18, color: TK.ink, padding: '4px 10px' }}>✕</button>
+          <div style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 600, color: TK.ink, marginRight: 38 }}>{title}</div>
+        </div>
+        <div style={{ overflow: 'auto', padding: '4px 20px' }}>
+          {options.map(o => {
+            const dis = disabledMap && disabledMap[o];
+            const on = sel.includes(o);
+            return (
+              <button key={o} onClick={() => tap(o)} style={{
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+                padding: '15px 2px', borderBottom: `1px solid ${TK.hairlineSoft}`,
+                cursor: dis ? 'not-allowed' : 'pointer', opacity: dis ? 0.45 : 1,
+              }}>
+                {multi && (
+                  <span style={{
+                    width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                    border: on ? 'none' : `1.5px solid ${TK.mutedSoft}`,
+                    background: on ? TK.blue : 'transparent',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#fff', fontSize: 11, fontWeight: 700,
+                  }}>{on ? '✓' : ''}</span>
+                )}
+                <span style={{ fontSize: 15, color: dis ? TK.muted : TK.ink, flex: 1, lineHeight: 1.5 }}>
+                  {o}{dis ? <span style={{ fontSize: 11, color: TK.mutedSoft }}>（不可选）</span> : ''}
+                </span>
+                {!multi && on && <span style={{ color: TK.blue, fontSize: 16, fontWeight: 700 }}>✓</span>}
+              </button>
+            );
+          })}
+          {anyDisabled && (
+            <div style={{ fontSize: 11, color: TK.muted, padding: '10px 2px', lineHeight: 1.5 }}>
+              ⓘ 与已选答案存在逻辑冲突的选项已置灰 — {FAIL_HINT}
+            </div>
+          )}
+        </div>
+        {multi && (
+          <div style={{ padding: '10px 20px 18px', borderTop: `1px solid ${TK.hairlineSoft}`, flexShrink: 0 }}>
+            <button onClick={onClose} style={{ width: '100%', height: 46, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 15, fontWeight: 600 }}>确定（已选 {sel.length} 项）</button>
+          </div>
+        )}
+      </div>
+    </div>
+    </PhoneOverlay>
+  );
+}
+
+// 字段行：显示已选值，点击打开半屏选择器
+function FieldRow({ display, error, reconfirm, onOpen }) {
+  return (
+    <div>
+      <button onClick={onOpen} style={{
+        width: '100%', minHeight: 50, borderRadius: 12, background: TK.canvas,
+        border: `1.5px solid ${error ? TK.down : TK.hairlineSoft}`,
+        display: 'flex', alignItems: 'center', padding: '12px 14px', textAlign: 'left',
+      }}>
+        <span style={{ flex: 1, fontSize: 14, color: display ? TK.ink : TK.mutedSoft, lineHeight: 1.5 }}>{display || '请选择'}</span>
+        <span style={{ color: TK.mutedSoft, fontSize: 14, marginLeft: 8 }}>⌄</span>
+      </button>
+      {error && <div style={{ fontSize: 11, color: TK.down, marginTop: 5 }}>此题为必答</div>}
+      {reconfirm && <div style={{ fontSize: 11, color: '#b57f00', marginTop: 5 }}>⚠ 因先前答案变更，此题需重新确认</div>}
+    </div>
+  );
+}
+
+// 全量题目配置（202608 final 版 + 8/25 结构化改造：4.1.3 拆三维度、4.2.2 预设多选）
+const QUIZ_SECTIONS = ['第一部分：API交易與投資經驗', '第二部分：技術能力評估', '第三部分：投資目標與風險承受能力', '第四部分：API交易算法說明'];
+const QUESTIONS = [
+  { id: 'q11', sec: 0, short: 'API 交易经验', text: '1.1 您是否有過使用 API 進行證券交易的經驗？', type: 's', opts: ['无', '有，但已终止', '有，目前正在使用'] },
+  { id: 'q11a', sec: 0, short: '经验年限', text: '1.1.1 如曾使用 API 進行交易，請說明使用經驗年限', type: 's', opts: ['6个月以下', '6个月-1年', '1-3年', '3年以上'], vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
+  { id: 'q11b', sec: 0, short: '交易平台/工具', text: '1.1.2 您曾使用過的 API 交易平台/工具（可多選）', type: 'm', opts: ['券商提供的 API', '第三方交易平台', '自行開發的交易軟件', '量化交易平台', '其他'], otherFill: true, vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
+  { id: 'q11c', sec: 0, short: '交易证券种类', text: '1.1.3 您通常通過 API 交易的證券種類（可多選）', type: 'm', opts: ['港股', '美股', 'A股', 'ETF', '期權', '期貨', '其他'], otherFill: true, vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
+  { id: 'q11d', sec: 0, short: '每日交易频率', text: '1.1.4 您過往通過 API 進行的平均每日交易頻率', type: 's', opts: ['无', '1-10笔', '10-50笔', '50-200笔', '200笔以上'], vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
+  { id: 'q12', sec: 0, short: '自动化交易经验', text: '1.2 您是否有過使用自動化交易策略或算法交易的經驗？', type: 's', opts: ['无', '有，但已终止', '有，目前正在使用'], vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
+  { id: 'q12a', sec: 0, short: '曾用策略类型', text: '1.2.1 如曾使用自動化交易策略，請簡要描述策略類型（可多選）', type: 'm', opts: ['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '其他'], otherFill: true, vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q12), dis: (a, R) => ({ '高频交易': R.hfDisabled12 }) },
+
+  { id: 'q21a', sec: 1, short: 'API 技术概念', text: '2.1.1 您是否理解以下 API 技術概念（可多選）', type: 'm', opts: ['API密钥管理', 'RESTful API', 'WebSocket', 'JSON格式', '速率限制（Rate Limiting）', '身份认证机制（如OAuth）', '以上皆理解'] },
+  { id: 'q21b', sec: 1, short: 'API 交易风险', text: '2.1.2 您是否了解 API 交易中的以下風險（可多選）', type: 'm', opts: ['系统中断风险', '网络延迟风险', '订单重复提交风险', 'API密钥泄露风险', '以上皆了解'] },
+  { id: 'q22a', sec: 1, short: '实时监控', text: '2.2.1 您是否計劃對 API 交易系統進行實時監控？', type: 's', opts: ['是，全天候监控', '是，非全天候监控', '否'] },
+  { id: 'q22b', sec: 1, short: '止损机制', text: '2.2.2 您是否設有交易止損機制？', type: 's', opts: ['是，已设置自动止损', '是，手动设置止损', '否'] },
+
+  { id: 'q31', sec: 2, short: '投资目标', text: '3.1 您開通 API 交易的主要投資目標（可多選）', type: 'm', opts: ['长期资本增值', '短期交易获利', '套利', '做市', '资产配置', '其他'], otherFill: true },
+  { id: 'q32', sec: 2, short: '风险承受能力', text: '3.2 您的風險承受能力評級', type: 's', opts: ['保守型（不愿承担任何本金损失）', '稳健型（可接受小幅波动）', '平衡型（可接受中等波动）', '进取型（可接受较大波动）', '激进型（可接受高风险高回报）'] },
+  { id: 'q32b', sec: 2, short: '最大回撤', text: '3.2.1 您能承受的總投資組合最大回撤', type: 's', opts: ['低于5%', '5-10%', '10-20%', '20-30%', '高于30%'] },
+  { id: 'q33a', sec: 2, short: '杠杆交易', text: '3.3.1 您是否計劃通過 API 進行槓桿交易？', type: 's', opts: ['是', '否'], dis: (a, R) => ({ '是': R.q33YesDisabled }) },
+  { id: 'q33b', sec: 2, short: '衍生产品', text: '3.3.2 您是否計劃通過 API 交易衍生產品（如期權、期貨、窩輪、牛熊證等）？', type: 's', opts: ['是', '否'], dis: (a, R) => ({ '是': R.q33YesDisabled }) },
+
+  { id: 'q41name', sec: 3, short: '策略名称', text: '4.1.1 交易策略名稱', type: 'text', placeholder: '請為您的策略命名（僅作標識）' },
+  { id: 'q41t', sec: 3, short: '策略类型', text: '4.1.2 策略類型（可多選）', type: 'm', opts: ['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '统计套利', '机器学习驱动', '其他'], otherFill: true, dis: (a, R) => ({ '做市': R.hfMmDisabled41, '高频交易': R.hfMmDisabled41 }) },
+  { id: 'q41d1', sec: 3, short: '决策依据', text: '4.1.3 決策依據 / 信號來源（可多選）', type: 'm', opts: ['技术指标', '价量数据/盘口订单簿', '基本面数据', '新闻/公告/舆情事件', '统计模型', '机器学习模型', '其他'], otherFill: true },
+  { id: 'q41d2', sec: 3, short: '持仓周期', text: '4.1.4 持倉週期', type: 's', opts: ['秒–分钟级（日内高频）', '分钟–小时级（日内波段）', '日内开平仓、不过夜', '数日–数周（短线波段）', '月度以上（中长期持有）'] },
+  { id: 'q41d3', sec: 3, short: '出入场与执行', text: '4.1.5 出入場與執行方式（可多選）', type: 'm', opts: ['信号触发自动开平仓（全自动）', '信号触发、人工确认后下单（半自动）', '固定止盈止损出场', '信号反转出场', '定时/到期强制平仓', '其他'], otherFill: true },
+  { id: 'q42', sec: 3, short: '风控机制', text: '4.2.1 您是否設有以下風控機制（可多選）', type: 'm', opts: ['自动止损', '自动止盈', '每日交易限额', '单笔交易限额', '最大持仓限制', '频率限制', '其他'], otherFill: true },
+  { id: 'q42e', sec: 3, short: '应急处理方案', text: '4.2.2 異常情況（如系統故障、市場劇烈波動）的應急處理方案（可多選）', type: 'm', opts: ['自动熔断/暂停策略', '自动止损平仓', '撤单重试', '切换人工手动交易', '告警通知人工介入', '其他'], otherFill: true },
+];
+
+function QuizScreen({ onBack, onClose, onSubmit, showToast }) {
+  const [a, setA] = useState({});
+  const [others, setOthers] = useState({});
+  const [sheet, setSheet] = useState(null);
+  const [missed, setMissed] = useState([]);
+  const [reconfirm, setReconfirm] = useState({});
+  const [exitAsk, setExitAsk] = useState(false);
+  const hasInput = Object.keys(a).length > 0 || Object.values(others).some(v => (v || '').trim());
+  const tryExit = () => { if (hasInput) { scrollTop(); setExitAsk(true); } else onClose(); };
+
+  const set = (id, v) => {
+    setA(prev => ({ ...prev, [id]: v }));
+    setMissed(prev => prev.filter(x => x !== id));
+    setReconfirm(prev => ({ ...prev, [id]: false }));
+  };
+  const scrollTop = () => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; };
+  const openSheet = (q) => { scrollTop(); setSheet(q); };
+
+  // —— 联动置灰规则（MVP 硬编码）——
+  const R = {
+    lowExp: a.q11 === '无' || (a.q11a && ['无', '6个月以下', '6个月-1年'].includes(a.q11a)),
+    hfDisabled12: a.q11d && ['无', '1-10笔', '10-50笔'].includes(a.q11d),
+    q33YesDisabled: a.q32 && a.q32.startsWith('平衡型'),
+  };
+  R.hfMmDisabled41 = R.lowExp || (a.q31 || []).includes('长期资本增值');
+  const riskWarn = a.q32 && (a.q32.startsWith('保守型') || a.q32.startsWith('稳健型'));
+
+  // 回改先答题 → 清除冲突答案并标记「需重新确认」
+  useEffect(() => {
+    if (R.hfMmDisabled41 && (a.q41t || []).some(v => v === '做市' || v === '高频交易')) {
+      setA(prev => ({ ...prev, q41t: prev.q41t.filter(v => v !== '做市' && v !== '高频交易') }));
+      setReconfirm(prev => ({ ...prev, q41t: true }));
+    }
+  }, [R.hfMmDisabled41]);
+  useEffect(() => {
+    if (R.hfDisabled12 && (a.q12a || []).includes('高频交易')) {
+      setA(prev => ({ ...prev, q12a: prev.q12a.filter(v => v !== '高频交易') }));
+      setReconfirm(prev => ({ ...prev, q12a: true }));
+    }
+  }, [R.hfDisabled12]);
+  useEffect(() => {
+    if (R.q33YesDisabled && (a.q33a === '是' || a.q33b === '是')) {
+      setA(prev => ({ ...prev, q33a: prev.q33a === '是' ? null : prev.q33a, q33b: prev.q33b === '是' ? null : prev.q33b }));
+      setReconfirm(prev => ({ ...prev, q33a: true, q33b: true }));
+    }
+  }, [R.q33YesDisabled]);
+
+  const visible = QUESTIONS.filter(q => !q.vis || q.vis(a));
+  const display = (q) => {
+    const v = a[q.id];
+    if (q.type === 'm') return (v && v.length) ? `已选 ${v.length} 项：${v.join('、')}` : '';
+    return v || '';
+  };
+
+  const submit = () => {
+    const missing = visible.filter(q => {
+      if (q.type === 'text') return !(a[q.id] || '').trim();
+      const v = a[q.id];
+      if (q.type === 'm') {
+        if (!v || v.length === 0) return true;
+        if (q.otherFill && v.includes('其他') && !(others[q.id] || '').trim()) return true;
+        return false;
+      }
+      return !v;
+    }).map(q => q.id);
+    if (missing.length) {
+      setMissed(missing);
+      showToast('还有必答题未完成');
+      const el = document.getElementById('q-' + missing[0]);
+      const c = document.getElementById('phone-content');
+      if (el && c) c.scrollTop = el.offsetTop - 70;
+      return;
+    }
+    const manual = visible.some(q => q.otherFill && (a[q.id] || []).includes('其他'));
+    onSubmit(manual ? 'manual' : 'auto');
+  };
+
+  let lastSec = -1;
+  return (
+    <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+      <LightNav title="适当性调查问卷" step={1} total={2} onBack={tryExit} onClose={tryExit} />
+      <div style={{ flex: 1, padding: '16px 20px 24px' }}>
+        {visible.map(q => {
+          const secHeader = q.sec !== lastSec ? (lastSec = q.sec, (
+            <div key={'sec' + q.sec} style={{ fontSize: 16, fontWeight: 700, color: TK.ink, margin: '14px 0 16px' }}>{QUIZ_SECTIONS[q.sec]}</div>
+          )) : null;
+          const disMap = q.dis ? q.dis(a, R) : null;
+          return (
+            <React.Fragment key={q.id}>
+              {secHeader}
+              <div id={'q-' + q.id} style={{ marginBottom: 22 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink, marginBottom: 10, lineHeight: 1.5 }}>{q.text}</div>
+                {q.type === 'text' ? (
+                  <input value={a[q.id] || ''} onChange={e => set(q.id, e.target.value)} placeholder={q.placeholder}
+                    style={{
+                      width: '100%', height: 50, borderRadius: 12, padding: '0 14px', fontSize: 14, background: TK.canvas,
+                      border: `1.5px solid ${missed.includes(q.id) ? TK.down : TK.hairlineSoft}`,
+                    }} />
+                ) : (
+                  <React.Fragment>
+                    <FieldRow display={display(q)} error={missed.includes(q.id)} reconfirm={reconfirm[q.id]} onOpen={() => openSheet(q)} />
+                    {q.id === 'q32' && riskWarn && (
+                      <div style={{ background: 'rgba(207,32,47,0.06)', border: '1px solid rgba(207,32,47,0.25)', borderRadius: 10, padding: '9px 12px', fontSize: 12, color: TK.down, marginTop: 8 }}>
+                        ⚠ {FAIL_HINT}
+                      </div>
+                    )}
+                    {q.otherFill && (a[q.id] || []).includes('其他') && (
+                      <React.Fragment>
+                        <input value={others[q.id] || ''} onChange={e => { setOthers({ ...others, [q.id]: e.target.value }); setMissed(prev => prev.filter(x => x !== q.id)); }}
+                          placeholder="請補充說明（必填）"
+                          style={{
+                            width: '100%', height: 48, borderRadius: 12, padding: '0 14px', fontSize: 14, marginTop: 8, background: TK.canvas,
+                            border: `1.5px solid ${missed.includes(q.id) ? TK.down : TK.hairlineSoft}`,
+                          }} />
+                        <div style={{ fontSize: 11, color: '#b57f00', marginTop: 8, background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
+                          選擇「其他」並填寫自定義內容，申請將進入人工審核（預計 1-3 個工作日）
+                        </div>
+                      </React.Fragment>
+                    )}
+                  </React.Fragment>
+                )}
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+      <FormFooter backText="上一步" nextText="提交" onBack={tryExit} onNext={submit} />
+      {exitAsk && (
+        <ConfirmModal title="确认退出申请？" lines={['退出后已填写的问卷内容将不保留。']} confirmText="退出" onCancel={() => setExitAsk(false)} onConfirm={onClose} />
+      )}
+      {sheet && (
+        <SheetSelect title={sheet.short} options={sheet.opts} multi={sheet.type === 'm'}
+          selected={a[sheet.id] || (sheet.type === 'm' ? [] : null)}
+          disabledMap={sheet.dis ? sheet.dis(a, R) : null}
+          onChange={(v) => set(sheet.id, v)}
+          onClose={() => setSheet(null)} />
+      )}
+    </div>
+  );
+}
+
+Object.assign(window, { QuizScreen });
+</script>
+<script type="text/babel">
+/* ================= PhoneOverlay: 手机屏幕覆盖层 =================
+   所有弹层/Toast 的容器。用 getBoundingClientRect 拿到 #phone-content 的
+   实际位置，以 position:fixed 精确覆盖手机可视区——不受内容滚动影响，
+   也不会溢出到手机框外。 */
+function PhoneOverlay({ children, style }) {
+  const [rect, setRect] = useState(null);
+  useEffect(() => {
+    const el = document.getElementById('phone-content');
+    if (el) setRect(el.getBoundingClientRect());
+  }, []);
+  if (!rect) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: rect.left, top: rect.top,
+      width: rect.width, height: rect.height,
+      overflow: 'hidden', zIndex: 90, borderRadius: 0, ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+Object.assign(window, { PhoneOverlay });
+</script>
+</body>
+</html>
