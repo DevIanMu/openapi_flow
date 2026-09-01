@@ -10,7 +10,7 @@
   云锋有鱼 OpenAPI 管理后台 MVP · 高保真可交互 Demo
   ----------------------------------------------------------------------------
   依据: docs/superpowers/specs/2026-08-26-openapi-admin-backend-design.md
-       （申请管理 + 服务管理两个模块，状态机与 APP 端 1:1 对齐）
+       （已按 APP 申请流 v2 调整：问卷 0828 版字段、Key 单生效策略）
   视觉: DESIGN-visual.md（Coinbase 风格机构级设计体系，antd v5 ConfigProvider
         theme token 覆盖：主色 #0052ff / pill 按钮 / hairline 分隔 / 单档阴影）
   假设 (Assumptions):
@@ -19,13 +19,21 @@
      角色决定；只读角色下所有操作按钮不渲染
   3. 当前登录账号名直接作为操作日志的「操作人」
   4. APISecret 按安全约定全站不出现；APIKey 仅展示掩码
-  5. 服务「已注销」客户的 Key 展示为「已失效」灰色态（规范只定义正常/已暂停，
-     失效为已注销服务的派生展示）
+  5. 服务「已注销」客户的 Key 展示为「已失效」灰色态；服务「已暂停」时全部 Key
+     展示为「已暂停」（服务级状态覆盖单 Key 状态）
   6. 做市/高频打标数据在 mock 中直接给出，真实环境由后端在开通时触发
   7. 复制按钮在 file:// 下若剪贴板 API 不可用，退化为提示展示完整掩码
-  8. 风控记录模块为只读事实数据；每条记录的「处置结果」字段统一抽象触发后的
-     实际后果（已拒单 / 阻断 API·已暂停 Key / 系统外处置·待重新 KYC / 待书面
-     问询），系统外处置的跟进（重新 KYC、书面问询、STR 评估）走系统外流程
+  8. 风控记录模块为只读事实数据；第一期所有规则触发后的处置结果统一为「已拒
+     单」，字段预留阻断 API·暂停 Key / 系统外处置等扩展值；同一笔订单命中多条
+     规则时，列表中以一次风控事件为一行，触发原因列聚合展示所有命中规则
+  9. 灰度白名单与问卷「其他」选项开关均由后端配置通道控制，管理后台不做配置
+     入口、不做展示；被 APP 端资格预检拦截的客户不进入后台
+  10. Key 状态与 APP 端 v2 对齐：生效中 / 未生效 / 已暂停；同一账户同一时刻仅
+     一个 Key 处于「生效中」，后台仅展示、不提供切换生效 Key 操作
+  11. IP 白名单非必填；未设置时显示「未设置，对所有 IP 有效」
+  12. 承载形态说明：本 demo 为独立可点击原型，用于功能与交互评审；按最新方案，
+      申请管理/服务管理最终嵌入 BPM 运营管理系统，风控记录/应急管理最终嵌入风
+      控系统，落地时遵循各自宿主系统的视觉规范与权限体系
   ============================================================================
 -->
 
@@ -155,27 +163,25 @@ function makeAutoQuestionnaire() {
       ]
     },
     {
-      part: '第三部分 · 投资目标与风险承受能力',
+      part: '第三部分 · 投资目标与杠杆衍生品',
       items: [
         { no: '3.1', q: '投资目标？', a: '积极资本增值' },
-        { no: '3.2', q: '风险承受能力？', a: '进取型' },
-        { no: '3.3', q: '是否计划使用杠杆或交易衍生品？', a: '否' }
+        { no: '3.2', q: '是否计划使用杠杆或交易衍生品？', a: '否' }
       ]
     },
     {
       part: '第四部分 · API 交易算法说明',
       items: [
         { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随、网格' },
-        { no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '技术指标信号（均线、动量）' },
-        { no: '4.1.3b', q: '策略描述：持仓周期？', a: '数小时至数日' },
-        { no: '4.1.3c', q: '策略描述：出入场与执行方式？', a: '限价单分批建仓' },
+        { no: '4.1.1', q: '决策依据 / 信号来源（多选）？', a: '技术指标信号（均线、动量）' },
+        { no: '4.1.2', q: '出入场及执行方式（多选）？', a: '限价单分批建仓' },
         { no: '4.2', q: '异常场景应急方案（多选）？', a: '自动熔断暂停、告警通知人工介入' }
       ]
     }
   ];
 }
 
-// 审核中客户 1：4.1.3 策略描述信号来源选「其他」（仅因「其他」转人工）
+// 审核中客户 1：4.1.1 决策依据 / 信号来源选「其他」（仅因「其他」转人工）
 const QUESTIONNAIRE_REVIEW_1 = [
   {
     part: '第一部分 · API 交易与投资经验',
@@ -193,20 +199,18 @@ const QUESTIONNAIRE_REVIEW_1 = [
     ]
   },
   {
-    part: '第三部分 · 投资目标与风险承受能力',
+    part: '第三部分 · 投资目标与杠杆衍生品',
     items: [
       { no: '3.1', q: '投资目标？', a: '积极资本增值' },
-      { no: '3.2', q: '风险承受能力？', a: '进取型' },
-      { no: '3.3', q: '是否计划使用杠杆或交易衍生品？', a: '计划交易衍生品（期权）' }
+      { no: '3.2', q: '是否计划使用杠杆或交易衍生品？', a: '计划交易衍生品（期权）' }
     ]
   },
   {
     part: '第四部分 · API 交易算法说明',
     items: [
-      { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随、其他' },
-      { no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '其他', other: '基于链上资金流与盘口微观结构融合的自定义信号' },
-      { no: '4.1.3b', q: '策略描述：持仓周期？', a: '日内' },
-      { no: '4.1.3c', q: '策略描述：出入场与执行方式？', a: '限价单分批建仓、 iceberg 拆单' },
+      { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随' },
+      { no: '4.1.1', q: '决策依据 / 信号来源（多选）？', a: '其他', other: '基于链上资金流与盘口微观结构融合的自定义信号' },
+      { no: '4.1.2', q: '出入场及执行方式（多选）？', a: '限价单分批建仓、 iceberg 拆单' },
       { no: '4.2', q: '异常场景应急方案（多选）？', a: '自动熔断暂停、告警通知人工介入' }
     ]
   }
@@ -230,35 +234,33 @@ const QUESTIONNAIRE_REVIEW_2 = [
     ]
   },
   {
-    part: '第三部分 · 投资目标与风险承受能力',
+    part: '第三部分 · 投资目标与杠杆衍生品',
     items: [
       { no: '3.1', q: '投资目标？', a: '积极资本增值' },
-      { no: '3.2', q: '风险承受能力？', a: '进取型' },
-      { no: '3.3', q: '是否计划使用杠杆或交易衍生品？', a: '否' }
+      { no: '3.2', q: '是否计划使用杠杆或交易衍生品？', a: '否' }
     ]
   },
   {
     part: '第四部分 · API 交易算法说明',
     items: [
       { no: '4.1', q: '计划使用的策略类型（多选）？', a: '趋势跟随、高频交易' },
-      { no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '盘口订单簿失衡信号' },
-      { no: '4.1.3b', q: '策略描述：持仓周期？', a: '秒级至分钟级' },
-      { no: '4.1.3c', q: '策略描述：出入场与执行方式？', a: '市价单快速进出' },
+      { no: '4.1.1', q: '决策依据 / 信号来源（多选）？', a: '盘口订单簿失衡信号' },
+      { no: '4.1.2', q: '出入场及执行方式（多选）？', a: '市价单快速进出' },
       { no: '4.2', q: '异常场景应急方案（多选）？', a: '其他', other: '人工值守盯盘，异常时电话通知风控联系人后手动处置' }
     ]
   }
 ];
 
-// 已审核（人工）客户的问卷快照：4.1.3 选「其他」，经 OA 三级审核通过
+// 已审核（人工）客户的问卷快照：4.1.1 选「其他」，经 OA 三级审核通过
 const QUESTIONNAIRE_MANUAL_PASSED = makeAutoQuestionnaire();
 QUESTIONNAIRE_MANUAL_PASSED[3].items[1] = {
-  no: '4.1.3', q: '策略描述：决策依据 / 信号来源？', a: '其他',
+  no: '4.1.1', q: '决策依据 / 信号来源（多选）？', a: '其他',
   other: '结合港股通南向资金流与行业轮动模型的多因子信号'
 };
 
 // 已驳回客户的问卷快照：4.2 选「其他」且表述模糊
 const QUESTIONNAIRE_REJECTED = makeAutoQuestionnaire();
-QUESTIONNAIRE_REJECTED[3].items[4] = {
+QUESTIONNAIRE_REJECTED[3].items[3] = {
   no: '4.2', q: '异常场景应急方案（多选）？', a: '其他',
   other: '到时候看情况处理'
 };
@@ -271,7 +273,7 @@ const INITIAL_APPLICATIONS = [
   {
     id: 'OA-20260825-001', yuId: '83625147', name: '陈昊然',
     submitTime: '2026-08-25 14:32', status: 'reviewing',
-    manualReason: '4.1.3 策略描述选择「其他」',
+    manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
     operator: null, operateTime: null, conclusionNote: null,
     questionnaire: QUESTIONNAIRE_REVIEW_1
   },
@@ -285,9 +287,9 @@ const INITIAL_APPLICATIONS = [
   {
     id: 'OA-20260823-002', yuId: '80142735', name: '李铭轩',
     submitTime: '2026-08-23 16:47', status: 'approved',
-    manualReason: '4.1.3 策略描述选择「其他」',
+    manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
     operator: '王敏', operateTime: '2026-08-24 10:12',
-    conclusionNote: '策略描述经交易部初审与风控部复核，信号来源可解释，可接受。',
+    conclusionNote: '决策依据 / 信号来源经交易部初审与风控部复核，信号来源可解释，可接受。',
     questionnaire: QUESTIONNAIRE_MANUAL_PASSED
   },
   {
@@ -308,7 +310,7 @@ const INITIAL_APPLICATIONS = [
   {
     id: 'OA-20260819-004', yuId: '82074196', name: '郑晓琳',
     submitTime: '2026-08-19 15:26', status: 'opened',
-    manualReason: '4.1.3 策略描述选择「其他」',
+    manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
     operator: '王敏', operateTime: '2026-08-20 09:31',
     conclusionNote: '做市策略经风控部审核通过，已同步打标「做市/高频」并通知交易部、风险部、合规部。',
     questionnaire: QUESTIONNAIRE_MANUAL_PASSED
@@ -340,8 +342,8 @@ const INITIAL_CUSTOMERS = [
     hft: false, agreementVersion: 'v1.0',
     ticket: { valid: true, expireTime: '2026-08-30 11:05' },
     keys: [
-      { id: 'K1', name: '主力策略', apiKey: maskKey('3f8a', '9c2d'), ips: ['203.186.94.17'], createTime: '2026-08-20 11:05', status: 'active' },
-      { id: 'K2', name: '回测联调', apiKey: maskKey('77b2', 'e041'), ips: ['203.186.94.17', '112.118.206.33'], createTime: '2026-08-21 16:20', status: 'paused' }
+      { id: 'K1', name: '主力策略', apiKey: maskKey('3f8a', '9c2d'), ips: ['203.186.94.17'], createTime: '2026-08-20 11:05', status: 'effective' },
+      { id: 'K2', name: '回测联调', apiKey: maskKey('77b2', 'e041'), ips: [], createTime: '2026-08-21 16:20', status: 'paused' }
     ],
     logs: [
       { operator: '系统', time: '2026-08-20 11:05', action: '开通服务', target: '服务', result: '成功' },
@@ -355,9 +357,9 @@ const INITIAL_CUSTOMERS = [
     hft: true, agreementVersion: 'v1.0',
     ticket: { valid: true, expireTime: '2026-08-29 14:18' },
     keys: [
-      { id: 'K3', name: '做市-港股-A', apiKey: maskKey('a41c', '5f7e'), ips: ['45.125.34.102', '45.125.34.103', '210.6.128.55'], createTime: '2026-08-20 14:18', status: 'active' },
+      { id: 'K3', name: '做市-港股-A', apiKey: maskKey('a41c', '5f7e'), ips: ['45.125.34.102', '45.125.34.103', '210.6.128.55'], createTime: '2026-08-20 14:18', status: 'effective' },
       { id: 'K4', name: '做市-港股-B', apiKey: maskKey('b902', '18aa'), ips: ['45.125.34.102'], createTime: '2026-08-20 14:25', status: 'paused' },
-      { id: 'K5', name: '备用观察', apiKey: maskKey('c3d7', '66b0'), ips: ['210.6.128.55'], createTime: '2026-08-22 10:40', status: 'active' }
+      { id: 'K5', name: '备用观察', apiKey: maskKey('c3d7', '66b0'), ips: ['210.6.128.55'], createTime: '2026-08-22 10:40', status: 'inactive' }
     ],
     logs: [
       { operator: '系统', time: '2026-08-20 14:18', action: '开通服务', target: '服务', result: '成功' },
@@ -371,8 +373,8 @@ const INITIAL_CUSTOMERS = [
     hft: false, agreementVersion: 'v1.0',
     ticket: { valid: false, expireTime: '2026-08-25 15:42' },
     keys: [
-      { id: 'K6', name: '网格策略', apiKey: maskKey('d5e1', '2c09'), ips: ['118.163.74.210'], createTime: '2026-08-18 15:42', status: 'active' },
-      { id: 'K7', name: '套利监控', apiKey: maskKey('e8f4', 'a3d6'), ips: ['118.163.74.210'], createTime: '2026-08-19 09:10', status: 'active' }
+      { id: 'K6', name: '网格策略', apiKey: maskKey('d5e1', '2c09'), ips: ['118.163.74.210'], createTime: '2026-08-18 15:42', status: 'effective' },
+      { id: 'K7', name: '套利监控', apiKey: maskKey('e8f4', 'a3d6'), ips: ['118.163.74.210'], createTime: '2026-08-19 09:10', status: 'inactive' }
     ],
     logs: [
       { operator: '系统', time: '2026-08-18 15:42', action: '开通服务', target: '服务', result: '成功' },
@@ -385,7 +387,7 @@ const INITIAL_CUSTOMERS = [
     hft: false, agreementVersion: 'v1.0',
     ticket: { valid: false, expireTime: '—（已注销）' },
     keys: [
-      { id: 'K8', name: '趋势策略', apiKey: maskKey('f1a9', 'd8c3'), ips: ['61.244.105.88'], createTime: '2026-08-17 10:26', status: 'active' }
+      { id: 'K8', name: '趋势策略', apiKey: maskKey('f1a9', 'd8c3'), ips: ['61.244.105.88'], createTime: '2026-08-17 10:26', status: 'effective' }
     ],
     logs: [
       { operator: '系统', time: '2026-08-17 10:26', action: '开通服务', target: '服务', result: '成功' },
@@ -407,32 +409,36 @@ const RISK_CATEGORY_OPTIONS = [
   { value: 'strategy', label: '风控策略' }
 ];
 
-// 处置结果：触发后的实际后果；color 为 null 时渲染默认灰色 Tag
+// 处置结果：本期所有风控规则触发后统一为「已拒单」；字段预留扩展空间
 const RISK_ACTION = {
-  reject: { text: '已拒单', color: null },
-  block: { text: '阻断 API · 已暂停 Key（人工）', color: 'orange' },
-  kyc: { text: '系统外处置 · 待重新 KYC', color: 'red' },
-  inquiry: { text: '系统外处置 · 待书面问询', color: 'red' }
+  reject: { text: '已拒单', color: null }
 };
 
-// action: reject = 已拒单（默认）；block = 风控人工暂停 Key；kyc / inquiry = 系统外处置
-// 注：策略 6 资金维度、策略 10 为成交后评估，不拒单、只告警
+// action: reject = 已拒单（本期统一处置结果）
+// 注：策略 6 资金维度、策略 10 为成交后评估，本期同样按「已拒单」记录，用于追溯与告警
 const INITIAL_RISK_RECORDS = [
-  { id: 'RK01', time: '2026-08-25 14:58', yuId: '82074196', name: '郑晓琳', symbol: '03888', symbolName: '金山软件', side: '买入', price: '31.250', qty: '40,000', category: 'strategy', rule: '策略 10：个股成交金额异常', reason: '该股当日成交金额占近 3 个月 ADV 达 12%（阈值 10%）', action: 'inquiry' },
+  { id: 'RK01', time: '2026-08-25 14:58', yuId: '82074196', name: '郑晓琳', symbol: '03888', symbolName: '金山软件', side: '买入', price: '31.250', qty: '40,000', category: 'strategy', rule: '策略 10：个股成交金额异常', reason: '该股当日成交金额占近 3 个月 ADV 达 12%（阈值 10%）', action: 'reject' },
   { id: 'RK02', time: '2026-08-25 11:42', yuId: '81056238', name: '吴子豪', symbol: '09888', symbolName: '百度集团-SW', side: '买入', price: '102.600', qty: '500', category: 'ip', rule: 'IP 白名单', reason: '请求来源 IP 113.52.88.19 不在该 Key 绑定白名单内', action: 'reject' },
   { id: 'RK03', time: '2026-08-25 10:15', yuId: '82074196', name: '郑晓琳', symbol: '08172', symbolName: '中国环境资源', side: '买入', price: '0.118', qty: '500,000', category: 'symbol', rule: '标的白名单', reason: '该证券近 3 个月日均成交额未达 500 万 HKD 准入门槛', action: 'reject' },
-  { id: 'RK15', time: '2026-08-25 09:32', yuId: '81056238', name: '吴子豪', symbol: '00700', symbolName: '腾讯控股', side: '买入', price: '388.000', qty: '200', category: 'strategy', rule: '策略 6：算法暴走 / 胖手指（速率维度）', reason: '秒级报撤单频率达 14 笔/秒（阈值 10 笔/秒）', action: 'block' },
+  { id: 'RK15', time: '2026-08-25 09:32', yuId: '81056238', name: '吴子豪', symbol: '00700', symbolName: '腾讯控股', side: '买入', price: '388.000', qty: '200', category: 'strategy', rule: '策略 6：算法暴走 / 胖手指（速率维度）', reason: '秒级报撤单频率达 14 笔/秒（阈值 10 笔/秒）', action: 'reject' },
   { id: 'RK04', time: '2026-08-24 16:08', yuId: '84531876', name: '刘俊杰', symbol: '01810', symbolName: '小米集团-W', side: '买入', price: '28.350', qty: '1,000', category: 'session', rule: '交易时间段限制', reason: '港股持续交易时段已结束（16:00 收市），订单当日有效不予接受', action: 'reject' },
   { id: 'RK05', time: '2026-08-24 14:31', yuId: '82074196', name: '郑晓琳', symbol: '01382', symbolName: '互太纺织', side: '买入', price: '1.860', qty: '100,000', category: 'strategy', rule: '策略 3：薄盘股异常 / 价格冲击', reason: '预计成交将推高价格 4.2%，超过价格冲击阈值', action: 'reject' },
   { id: 'RK06', time: '2026-08-24 09:47', yuId: '81056238', name: '吴子豪', symbol: '09988', symbolName: '阿里巴巴-SW', side: '买入', price: '118.900', qty: '200', category: 'param', rule: '港股限价盘 24 档', reason: '委托价格偏离按盘价超过 24 个价位', action: 'reject' },
-  { id: 'RK07', time: '2026-08-23 15:22', yuId: '84531876', name: '刘俊杰', symbol: '00941', symbolName: '中国移动', side: '买入', price: '74.500', qty: '3,000', category: 'strategy', rule: '策略 6：算法暴走 / 胖手指（资金维度）', reason: '当日成交总额超过开户问卷流动资产范围上限', action: 'kyc' },
+  { id: 'RK07', time: '2026-08-23 15:22', yuId: '84531876', name: '刘俊杰', symbol: '00941', symbolName: '中国移动', side: '买入', price: '74.500', qty: '3,000', category: 'strategy', rule: '策略 6：算法暴走 / 胖手指（资金维度）', reason: '当日成交总额超过开户问卷流动资产范围上限', action: 'reject' },
   { id: 'RK08', time: '2026-08-22 13:05', yuId: '81056238', name: '吴子豪', symbol: '00700', symbolName: '腾讯控股', side: '买入', price: '386.411', qty: '100', category: 'param', rule: '参数合法性校验', reason: '委托价格不符合最小价位表（0.200 档）', action: 'reject' },
   { id: 'RK09', time: '2026-08-22 10:38', yuId: '82074196', name: '郑晓琳', symbol: '02018', symbolName: '瑞声科技', side: '卖出', price: '42.150', qty: '2,500', category: 'session', rule: '交易时间段限制', reason: '开市竞价时段不支持竞价市价单', action: 'reject' },
   { id: 'RK10', time: '2026-08-21 15:56', yuId: '84531876', name: '刘俊杰', symbol: '00981', symbolName: '中芯国际', side: '买入', price: '48.700', qty: '10,000', category: 'strategy', rule: '策略 5：消息前异常扫货', reason: '重大事项公告前 30 分钟内集中买入同一标的', action: 'reject' },
   { id: 'RK11', time: '2026-08-20 12:23', yuId: '80965427', name: '孙梦瑶', symbol: '01211', symbolName: '比亚迪股份', side: '卖出', price: '238.000', qty: '500', category: 'session', rule: '交易时间段限制', reason: '午间休市时段（12:00–13:00）不接受新委托', action: 'reject' },
   { id: 'RK12', time: '2026-08-20 10:44', yuId: '81056238', name: '吴子豪', symbol: '02382', symbolName: '舜宇光学科技', side: '买入', price: '63.300', qty: '300', category: 'ip', rule: 'IP 白名单', reason: '请求来源 IP 45.77.129.61 不在该 Key 绑定白名单内', action: 'reject' },
   { id: 'RK13', time: '2026-08-19 14:19', yuId: '82074196', name: '郑晓琳', symbol: '08313', symbolName: '杰地集团', side: '买入', price: '0.066', qty: '800,000', category: 'symbol', rule: '标的白名单', reason: '该证券近 3 个月日均成交额未达 500 万 HKD 准入门槛', action: 'reject' },
-  { id: 'RK14', time: '2026-08-18 11:07', yuId: '81056238', name: '吴子豪', symbol: '00388', symbolName: '香港交易所', side: '卖出', price: '322.800', qty: '153', category: 'param', rule: '参数合法性校验', reason: '委托数量非整手（1 手 = 100 股）', action: 'reject' }
+  { id: 'RK14', time: '2026-08-18 11:07', yuId: '81056238', name: '吴子豪', symbol: '00388', symbolName: '香港交易所', side: '卖出', price: '322.800', qty: '153', category: 'param', rule: '参数合法性校验', reason: '委托数量非整手（1 手 = 100 股）', action: 'reject' },
+  {
+    id: 'RK16', time: '2026-08-17 10:15', yuId: '80965427', name: '孙梦瑶', symbol: '02382', symbolName: '舜宇光学科技', side: '买入', price: '63.300', qty: '300', category: 'ip', rule: 'IP 白名单 · 标的白名单', reason: '同一笔订单同时命中 2 条规则', action: 'reject',
+    rules: [
+      { rule: 'IP 白名单', reason: '请求来源 IP 45.77.129.61 不在该 Key 绑定白名单内' },
+      { rule: '标的白名单', reason: '该证券近 3 个月日均成交额未达 500 万 HKD 准入门槛' }
+    ]
+  }
 ];
 
 /* ==========================================================================
@@ -489,10 +495,10 @@ function ServiceStatusTag({ status }) {
 
 function KeyStatusTag({ keyStatus, serviceStatus }) {
   if (serviceStatus === 'cancelled') return <Tag>已失效</Tag>;
-  if (serviceStatus === 'paused') return <Tag>已暂停</Tag>;
-  return keyStatus === 'active'
-    ? <Tag color="green">正常</Tag>
-    : <Tag>已暂停</Tag>;
+  if (serviceStatus === 'paused') return <Tag color="orange">已暂停</Tag>;
+  if (keyStatus === 'effective') return <Tag color="green">生效中</Tag>;
+  if (keyStatus === 'inactive') return <Tag>未生效</Tag>;
+  return <Tag color="orange">已暂停</Tag>;
 }
 
 function HftTag() {
@@ -925,16 +931,31 @@ function ServiceDetailPage({ customer, role, operator, riskRecords, onBack, onOp
       )
     },
     { title: '绑定 IP', dataIndex: 'ips', render: ips => (
-        <Space size={4} wrap>
-          {ips.slice(0, 3).map(ip => <Tag key={ip} className="mono" style={{ fontSize: 12 }}>{ip}</Tag>)}
-        </Space>
+        ips && ips.length > 0
+          ? <Space size={4} wrap>
+              {ips.slice(0, 3).map(ip => <Tag key={ip} className="mono" style={{ fontSize: 12 }}>{ip}</Tag>)}
+            </Space>
+          : <Text style={{ color: COLOR.muted, fontSize: 13 }}>未设置，对所有 IP 有效</Text>
       )
     },
     { title: '创建时间', dataIndex: 'createTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
     { title: '状态', width: 90, render: (_, r) => <KeyStatusTag keyStatus={r.status} serviceStatus={customer.serviceStatus} /> },
     ...(role === 'admin' && customer.serviceStatus === 'active' ? [{
       title: '操作', width: 110, render: (_, r) => (
-        r.status === 'active' ? (
+        r.status === 'paused' ? (
+          <Popconfirm
+            title="恢复该 Key？"
+            description="恢复后该 Key 回到「未生效」状态，不会自动变为生效中；如需生效，由客户在 APP 端切换。"
+            okText="确认恢复"
+            cancelText="取消"
+            onConfirm={() => {
+              onKeyToggle(customer.id, r.id, 'inactive');
+              message.success('Key「' + r.name + '」已恢复为未生效');
+            }}
+          >
+            <Button size="small" type="primary" ghost icon={React.createElement(PlayCircleOutlined)}>恢复</Button>
+          </Popconfirm>
+        ) : (
           <Popconfirm
             title="暂停该 Key？"
             description="仅作用于该 Key，不影响其他 Key 与服务整体。"
@@ -946,19 +967,6 @@ function ServiceDetailPage({ customer, role, operator, riskRecords, onBack, onOp
             }}
           >
             <Button size="small" icon={React.createElement(PauseCircleOutlined)}>暂停</Button>
-          </Popconfirm>
-        ) : (
-          <Popconfirm
-            title="恢复该 Key？"
-            description="恢复后该 Key 可继续用于 API 交易。"
-            okText="确认恢复"
-            cancelText="取消"
-            onConfirm={() => {
-              onKeyToggle(customer.id, r.id, 'active');
-              message.success('Key「' + r.name + '」已恢复');
-            }}
-          >
-            <Button size="small" type="primary" ghost icon={React.createElement(PlayCircleOutlined)}>恢复</Button>
           </Popconfirm>
         )
       )
@@ -1095,6 +1103,16 @@ function RiskReasonCell({ r }) {
     <div>
       <Text strong style={{ fontSize: 13 }}>{r.rule}</Text>
       <div style={{ color: COLOR.body, fontSize: 13 }}>{r.reason}</div>
+      {r.rules && (
+        <div style={{ marginTop: 8, padding: '8px 12px', background: COLOR.surfaceSoft, borderRadius: 8 }}>
+          {r.rules.map((item, i) => (
+            <div key={i} style={{ marginBottom: i < r.rules.length - 1 ? 6 : 0 }}>
+              <Text strong style={{ fontSize: 12 }}>{item.rule}</Text>
+              <div style={{ color: COLOR.body, fontSize: 12 }}>{item.reason}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1140,7 +1158,7 @@ function RiskListPage({ records }) {
         type="info"
         showIcon
         style={{ marginBottom: 16, borderRadius: 12 }}
-        message="本页覆盖全部风控触发记录：含拒单类记录与不拒单的告警类记录（策略 6 资金维度、策略 10）。每条记录的「处置结果」说明触发后的实际后果；系统外处置（重新 KYC、书面问询、STR 评估）的跟进走系统外流程。本模块只读。"
+        message="本页覆盖全部风控触发记录。第一期所有规则触发后的处置结果统一为「已拒单」。同一笔订单可能命中多条规则，列表中一行对应一次触发事件，「触发原因」列聚合展示所有命中规则，支持展开查看各规则明细。本模块只读。"
       />
       <Space size={12} wrap style={{ marginBottom: 20 }}>
         <Select

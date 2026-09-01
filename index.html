@@ -3,23 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>云锋有鱼 · OpenAPI 申请与管理 Flow Demo</title>
+<title>云锋有鱼 · OpenAPI 申请与管理 Flow Demo v2</title>
 
 <!--
   ============================================================================
-  云锋有鱼 OpenAPI 申请与管理 · 高保真可交互 Flow Demo
+  云锋有鱼 OpenAPI 申请与管理 · 高保真可交互 Flow Demo v2
   ----------------------------------------------------------------------------
-  依据: docs/superpowers/specs/2026-08-24-app-openapi-apply-design.md
+  依据: docs/superpowers/specs/2026-08-28-app-openapi-apply-design-v2.md
+        (基于 2026-08-24 版副本调整)
   视觉: DESIGN-visual.md (Coinbase 风格, 主色 #0052ff)
        + APP 实际形态 (background/screenshot/):
          主界面深色 (全部服务/我的) · 表单流程浅色 (开户页面)
+  v2 变更 (2026-08-28):
+  1. 问卷接入 20260828 版 (删除风险承受能力相关题目, 4.1/4.2 结构化坐实)
+  2. 问卷按 4 个章节分页填写 (分段进度条 + 上一步/下一步 + 按页必答校验)
+  3. 选项题下平铺 (废弃半屏选择器), 置灰选项原位旁注统一提示
+  4. 风险承受能力改为介绍页入口拦截 (仅进取型/激进型可申请, 引导更新风险测评)
   假设 (Assumptions):
   1. 深色页 = 原生 (入口/介绍/管理), 浅色页 = 申请流表单 (对齐开户页面结构:
      分段进度条 + 底部双按钮); 问卷/协议 H5 内容用繁中, 原生 chrome 用简体
   2. 交易密码弹窗为演示组件, 任意 6 位或"一键填入"均可通过
-  3. Key 上限 N=3 仅为演示取值; ticket 有效期 7 天为暂定值
-  4. 问卷为节选题目, 用于演示: 1.1 渐进展示 / 联动置灰 / 统一提示 / 其他转人工
-  5. 页面左侧为 Demo 评审面板 (场景切换 + 流程跳转), 非产品 UI
+  3. Key 上限 N=3 仅为演示取值; token 有效期 7 天为暂定值
+  4. 页面左侧为 Demo 评审面板 (场景切换 + 流程跳转 + 资格预检模拟), 非产品 UI
   ============================================================================
 -->
 
@@ -207,8 +212,8 @@ function CheckItem({ checked, onToggle, label, sub }) {
   );
 }
 
-// 单选/多选选项 (浅色表单用)
-function Option({ label, selected, disabled, onClick, multi }) {
+// 单选/多选选项卡片 (浅色表单用, 题下平铺); 置灰选项原位展示 + 旁注统一提示
+function Option({ label, selected, disabled, onClick, multi, disabledHint }) {
   return (
     <button onClick={disabled ? undefined : onClick} style={{
       display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
@@ -220,30 +225,18 @@ function Option({ label, selected, disabled, onClick, multi }) {
       <div style={{
         width: 18, height: 18, flexShrink: 0,
         borderRadius: multi ? 5 : '50%',
-        border: selected ? 'none' : `1.5px solid ${disabled ? TK.mutedSoft : TK.mutedSoft}`,
+        border: selected ? 'none' : `1.5px solid ${TK.mutedSoft}`,
         background: selected ? TK.blue : 'transparent',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         color: '#fff', fontSize: 11, fontWeight: 700,
       }}>{selected ? '✓' : ''}</div>
-      <span style={{ fontSize: 14, color: disabled ? TK.muted : TK.ink }}>{label}</span>
-      {disabled && <span style={{ marginLeft: 'auto', fontSize: 11, color: TK.muted }}>不可选</span>}
+      <span style={{ fontSize: 14, color: disabled ? TK.muted : TK.ink, flex: 1, lineHeight: 1.5 }}>{label}</span>
+      {disabled && <span style={{ marginLeft: 'auto', flexShrink: 0, maxWidth: 108, fontSize: 10, color: TK.mutedSoft, textAlign: 'right', lineHeight: 1.4 }}>{disabledHint || '不可选'}</span>}
     </button>
   );
 }
 
-// 题组容器
-function QGroup({ title, note, children }) {
-  return (
-    <div style={{ marginBottom: 28 }}>
-      <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink, marginBottom: 4, lineHeight: 1.4 }}>{title}</div>
-      {note && <div style={{ fontSize: 12, color: TK.muted, marginBottom: 10 }}>{note}</div>}
-      {!note && <div style={{ height: 6 }} />}
-      {children}
-    </div>
-  );
-}
-
-Object.assign(window, { TK, FAIL_HINT, IosFrame, Toast, DarkNav, LightNav, FormFooter, CheckItem, Option, QGroup });
+Object.assign(window, { TK, FAIL_HINT, IosFrame, Toast, DarkNav, LightNav, FormFooter, CheckItem, Option });
 </script>
 
 <script type="text/babel">
@@ -373,16 +366,27 @@ function ServicesScreen({ onEnter }) {
   );
 }
 
-/* ================= 深色页: API 交易介绍页 (未开通) ================= */
-function IntroScreen({ onBack, onApply, rejected }) {
+/* ================= 深色页: API 交易介绍页 (未开通) =================
+   gate: '' 可申请 | 'unopened' 未开户成功 | 'needrisk' 未做/过期风险测评 | 'risk' 风险评级不符 | 'whitelist' 灰度白名单拦截 */
+const GATE_BLOCKS = {
+  unopened: { title: '暫不滿足申請條件', text: 'API 交易服務僅面向已完成云锋有鱼账户开户的客戶。請先完成開戶後再申請。' },
+  needrisk: { title: '暫不滿足申請條件', text: 'API 交易服務需先完成風險承受能力測評。請先做/更新測評後再申請。' },
+  risk: { title: '暫不滿足申請條件', text: 'API 交易服務僅面向風險承受能力為進取型或激進型的客戶。您當前的風險測評結果暫不滿足申請條件。' },
+  whitelist: { title: '暂未开放申请', text: '当前为灰度体验期，您暂不在体验名单内，开放后将第一时间通知。' },
+};
+function IntroScreen({ onBack, onApply, rejected, gate, onOpenAccount, onDoRisk, onUpdateRisk }) {
+  const cta = gate === 'unopened' ? { text: '去完成开户', action: onOpenAccount }
+    : gate === 'needrisk' ? { text: '去做风险测评', action: onDoRisk }
+    : gate === 'risk' ? { text: '去更新风险测评', action: onUpdateRisk }
+    : null;
   return (
     <div style={{ background: TK.dark, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <DarkNav title="API 交易" onBack={onBack} />
-      <div style={{ flex: 1, padding: '8px 20px 20px', overflow: 'auto' }}>
+      <div style={{ flex: 1, padding: '8px 20px 120px' }}>
         {rejected && (
           <div style={{ background: 'rgba(207,32,47,0.12)', border: '1px solid rgba(207,32,47,0.35)', borderRadius: 12, padding: '12px 14px', marginBottom: 16 }}>
             <div style={{ color: '#ff6b75', fontSize: 13, fontWeight: 600, marginBottom: 2 }}>申请未获通过</div>
-            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.5 }}>您申报的风险承受能力与 API 交易服务的风险等级不匹配。如有疑问请联系客服。</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.5 }}>您提交的申请资料未能通过审核。如有疑问请联系客服。</div>
           </div>
         )}
         <div style={{ fontSize: 26, fontWeight: 400, color: '#fff', lineHeight: 1.25, letterSpacing: -0.5, margin: '14px 0 10px' }}>
@@ -393,9 +397,9 @@ function IntroScreen({ onBack, onApply, rejected }) {
         </div>
 
         {[
-          ['REST + WebSocket', '同一套 APIKey / Secret / ticket / IP 白名单'],
+          ['REST + WebSocket', '同一套 APIKey / Secret / token / IP 白名单'],
           ['交易能力', '行情查询 · 下单撤单 · 账户查询 · 与 APP 共享资金账户'],
-          ['安全机制', 'IP 白名单 · ticket 会话续期 · 交易密码验证'],
+          ['安全机制', 'IP 白名单 · token 会话续期 · 交易密码验证'],
         ].map(([t, d]) => (
           <div key={t} style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginBottom: 10 }}>
             <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 3 }}>{t}</div>
@@ -405,7 +409,7 @@ function IntroScreen({ onBack, onApply, rejected }) {
 
         <div style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginBottom: 10, marginTop: 4 }}>
           <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>开通前请知悉</div>
-          {['需完成适当性调查问卷（自动审核）', '需签署《交易适当性补充协议》与《API交易风险披露声明》', '美股等部分品种实时行情需另行购买行情卡', '当前为灰度体验期，仅白名单用户可申请'].map(t => (
+          {['需已完成云锋有鱼账户开户', '需完成风险承受能力测评，且评级为进取型或激进型', '当前为灰度体验期，仅白名单用户可申请', '需完成适当性调查问卷（自动审核）', '需签署《交易适当性补充协议》与《API交易风险披露声明》', '美股等部分品种实时行情需另行购买行情卡'].map(t => (
             <div key={t} style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
               <span style={{ color: TK.blueOnDark, fontSize: 12 }}>·</span>
               <span style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.6 }}>{t}</span>
@@ -414,8 +418,29 @@ function IntroScreen({ onBack, onApply, rejected }) {
         </div>
         <button style={{ color: TK.blueOnDark, fontSize: 13, padding: '8px 0' }}>查看接入文档 ›</button>
       </div>
-      <div style={{ padding: '12px 20px 22px' }}>
-        <button onClick={onApply} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 16, fontWeight: 600 }}>立即申请</button>
+      <div style={{
+        position: 'sticky', bottom: 0, left: 0, right: 0,
+        padding: '12px 20px 22px', background: TK.dark, zIndex: 10,
+      }}>
+        {gate && (
+          <div style={{ background: 'rgba(244,176,0,0.10)', border: '1px solid rgba(244,176,0,0.35)', borderRadius: 12, padding: '12px 14px', marginBottom: 12 }}>
+            <div style={{ color: TK.yellow, fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{GATE_BLOCKS[gate].title}</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.6 }}>{GATE_BLOCKS[gate].text}</div>
+          </div>
+        )}
+        {gate ? (
+          cta && (
+            <button onClick={cta.action} style={{
+              width: '100%', height: 50, borderRadius: 100, fontSize: 16, fontWeight: 600,
+              background: TK.blue, color: '#fff',
+            }}>{cta.text}</button>
+          )
+        ) : (
+          <button onClick={onApply} style={{
+            width: '100%', height: 50, borderRadius: 100, fontSize: 16, fontWeight: 600,
+            background: TK.blue, color: '#fff',
+          }}>立即申请</button>
+        )}
       </div>
     </div>
   );
@@ -435,11 +460,6 @@ function ReviewingScreen({ onBack, onPass, onReject }) {
           </div>
           <div style={{ marginTop: 14, display: 'inline-block', background: 'rgba(244,176,0,0.12)', color: TK.yellow, fontSize: 11, borderRadius: 100, padding: '4px 12px' }}>预计 1-3 个工作日（SLA 待业务确认）</div>
         </div>
-        <div style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginTop: 12 }}>
-          <div style={{ color: '#fff', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>已提交的问卷结论</div>
-          <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.7 }}>逻辑校验已通过；4.1 / 4.2 含「其他」自定义填写，转人工复核。审核通过后将从「协议签署」继续，问卷无需重填。</div>
-        </div>
-        <button style={{ color: TK.blueOnDark, fontSize: 13, padding: '14px 0' }}>联系客服 ›</button>
       </div>
       {/* Demo 控制: 模拟审核结果 */}
       <div style={{ padding: '12px 20px 22px', borderTop: `1px solid ${TK.darkLine}` }}>
@@ -457,155 +477,6 @@ Object.assign(window, { PasswordModal, ConfirmModal, DocModal, ServicesScreen, I
 </script>
 
 <script type="text/babel">
-/* ================= 浅色页 Step1: 问卷 (渐进展示 + 联动置灰 + 统一提示) ================= */
-function QuizScreenLegacy({ onBack, onClose, onSubmit, showToast }) {
-  const [exp, setExp] = useState(null);          // 1.1 主问题
-  const [years, setYears] = useState(null);      // 1.1 经验年限
-  const [freq, setFreq] = useState(null);        // 1.1 每日频率
-  const [algo, setAlgo] = useState(null);        // 1.2 自动化经验
-  const [algoStrats, setAlgoStrats] = useState([]); // 1.2 策略类型
-  const [goals, setGoals] = useState([]);        // 3.1 投资目标
-  const [risk, setRisk] = useState(null);        // 3.2 风险承受能力
-  const [leverage, setLeverage] = useState(null);// 3.3 杠杆
-  const [deriv, setDeriv] = useState(null);      // 3.3 衍生品
-  const [strats, setStrats] = useState([]);      // 4.1 策略类型
-  const [otherText, setOtherText] = useState('');
-
-  const hasExp = exp === 'ended' || exp === 'using';
-  const hasAlgo = algo === 'ended' || algo === 'using';
-  const toggle = (arr, setArr, v) => setArr(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
-
-  // —— 联动置灰规则 (MVP 硬编码) ——
-  const lowExp = !hasExp || (years && ['无', '6个月以下', '6个月-1年'].includes(years)); // 规则② (无经验视同不足1年)
-  const hfMmDisabled41 = lowExp || goals.includes('长期资本增值');                        // 规则② + ④
-  const hfDisabled12 = freq && ['无', '1-10笔', '10-50笔'].includes(freq);               // 规则③
-  const q33YesDisabled = risk === '平衡型';                                              // 规则⑥
-  const riskWarn = risk === '保守型' || risk === '稳健型';                               // 规则⑤ 选中提示
-
-  const GreyNote = () => (
-    <div style={{ fontSize: 11, color: TK.muted, lineHeight: 1.5, marginTop: -2, marginBottom: 4 }}>
-      ⓘ 部分选项与已选答案存在逻辑冲突，已置灰 — {FAIL_HINT}
-    </div>
-  );
-
-  const complete = exp && goals.length > 0 && risk && leverage && deriv && strats.length > 0
-    && (!hasExp || (years && freq && algo && (!hasAlgo || algoStrats.length > 0)))
-    && (!strats.includes('其他') || otherText.trim().length > 0);
-
-  const submit = () => {
-    if (!complete) { showToast('请完成所有必答题'); return; }
-    const manual = strats.includes('其他') || algoStrats.includes('其他');
-    onSubmit(manual ? 'manual' : 'auto');
-  };
-
-  return (
-    <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
-      <LightNav title="适当性调查问卷" step={1} total={2} onBack={tryExit} onClose={tryExit} />
-      <div style={{ flex: 1, padding: '16px 20px 24px' }}>
-        <div style={{ fontSize: 11, color: TK.muted, background: TK.surfaceStrong, borderRadius: 8, padding: '8px 12px', marginBottom: 20 }}>
-          Demo 节选题目，用于演示：1.1 渐进展示 · 联动置灰 · 统一提示 ·「其他」转人工。正式问卷以 202608 final 版为准（繁中）。
-        </div>
-
-        <QGroup title="1.1 您是否有過使用 API 進行證券交易的經驗？">
-          {['无', '有，但已终止', '有，目前正在使用'].map(v => (
-            <Option key={v} label={v} selected={exp === v} onClick={() => { setExp(v); if (v === '无') { setYears(null); setFreq(null); setAlgo(null); setAlgoStrats([]); } }} />
-          ))}
-        </QGroup>
-
-        {hasExp && (
-          <React.Fragment>
-            <QGroup title="1.1.1 使用經驗年限">
-              {['无', '6个月以下', '6个月-1年', '1-3年', '3年以上'].map(v => (
-                <Option key={v} label={v} selected={years === v} onClick={() => setYears(v)} />
-              ))}
-            </QGroup>
-            <QGroup title="1.1.2 您過往通過 API 進行的平均每日交易頻率">
-              {['无', '1-10笔', '10-50笔', '50-200笔', '200笔以上'].map(v => (
-                <Option key={v} label={v} selected={freq === v} onClick={() => setFreq(v)} />
-              ))}
-            </QGroup>
-            <QGroup title="1.2 您是否有過使用自動化交易策略或算法交易的經驗？">
-              {['无', '有，但已终止', '有，目前正在使用'].map(v => (
-                <Option key={v} label={v} selected={algo === v} onClick={() => { setAlgo(v); if (v === '无') setAlgoStrats([]); }} />
-              ))}
-            </QGroup>
-            {hasAlgo && (
-              <QGroup title="1.2.1 曾使用的策略類型（可多選）">
-                {hfDisabled12 && <GreyNote />}
-                {['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '其他'].map(v => (
-                  <Option key={v} multi label={v} selected={algoStrats.includes(v)}
-                    disabled={v === '高频交易' && hfDisabled12}
-                    onClick={() => toggle(algoStrats, setAlgoStrats, v)} />
-                ))}
-              </QGroup>
-            )}
-          </React.Fragment>
-        )}
-
-        <QGroup title="3.1 您開通 API 交易的主要投資目標（可多選）">
-          {['长期资本增值', '短期交易获利', '套利', '做市', '资产配置', '其他'].map(v => (
-            <Option key={v} multi label={v} selected={goals.includes(v)} onClick={() => toggle(goals, setGoals, v)} />
-          ))}
-        </QGroup>
-
-        <QGroup title="3.2 您的風險承受能力評級">
-          {riskWarn && (
-            <div style={{ background: 'rgba(207,32,47,0.06)', border: '1px solid rgba(207,32,47,0.25)', borderRadius: 10, padding: '9px 12px', fontSize: 12, color: TK.down, marginBottom: 10 }}>
-              ⚠ {FAIL_HINT}
-            </div>
-          )}
-          {['保守型（不愿承担任何本金损失）', '稳健型（可接受小幅波动）', '平衡型', '进取型', '激进型'].map(v => {
-            const key = v.slice(0, 3);
-            return <Option key={v} label={v} selected={risk === key} onClick={() => setRisk(key)} />;
-          })}
-        </QGroup>
-
-        <QGroup title="3.3 您是否計劃通過 API 進行槓桿交易 / 交易衍生產品？">
-          {q33YesDisabled && <GreyNote />}
-          {[['leverage', '计划杠杆交易', leverage, setLeverage], ['deriv', '计划交易衍生产品', deriv, setDeriv]].map(([k, label, val, setVal]) => (
-            <div key={k} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, color: TK.body, marginBottom: 6 }}>{label}</div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                {['是', '否'].map(v => (
-                  <button key={v} disabled={v === '是' && q33YesDisabled}
-                    onClick={() => setVal(v)}
-                    style={{
-                      flex: 1, height: 44, borderRadius: 12, fontSize: 14,
-                      border: `1.5px solid ${val === v ? TK.blue : TK.hairlineSoft}`,
-                      background: (v === '是' && q33YesDisabled) ? TK.surfaceStrong : (val === v ? 'rgba(0,82,255,0.04)' : TK.canvas),
-                      color: (v === '是' && q33YesDisabled) ? TK.mutedSoft : (val === v ? TK.blue : TK.ink),
-                      cursor: (v === '是' && q33YesDisabled) ? 'not-allowed' : 'pointer',
-                      fontWeight: val === v ? 600 : 400,
-                    }}>{v}{v === '是' && q33YesDisabled ? '（不可选）' : ''}</button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </QGroup>
-
-        <QGroup title="4.1 計劃通過 API 執行的策略類型（可多選）" note="選擇「做市」或「高頻交易」的客戶，開通後將被納入重點關注">
-          {hfMmDisabled41 && <GreyNote />}
-          {['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '统计套利', '机器学习驱动', '其他'].map(v => (
-            <Option key={v} multi label={v} selected={strats.includes(v)}
-              disabled={(v === '做市' || v === '高频交易') && hfMmDisabled41}
-              onClick={() => toggle(strats, setStrats, v)} />
-          ))}
-          {strats.includes('其他') && (
-            <React.Fragment>
-              <input value={otherText} onChange={e => setOtherText(e.target.value)}
-                placeholder="請簡要描述您的策略（必填）"
-                style={{ width: '100%', height: 48, borderRadius: 12, border: `1.5px solid ${TK.hairlineSoft}`, padding: '0 14px', fontSize: 14, marginTop: 4 }} />
-              <div style={{ fontSize: 11, color: TK.yellow, marginTop: 8, background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
-                選擇「其他」並填寫自定義內容，申請將進入人工審核（預計 1-3 個工作日）
-              </div>
-            </React.Fragment>
-          )}
-        </QGroup>
-      </div>
-      <FormFooter backText="上一步" nextText="提交" onBack={onBack} onNext={submit} />
-    </div>
-  );
-}
 
 /* ================= 浅色页 Step2: 协议签署 (勾选 + 全文入口) ================= */
 const DOCS = [
@@ -672,7 +543,7 @@ function IpScreen({ ips, setIps, onBack, onClose, onNext, showToast }) {
       <LightNav title="IP 白名单" step={3} total={4} onBack={onBack} onClose={onClose} />
       <div style={{ flex: 1, padding: '20px 20px 24px' }}>
         <div style={{ fontSize: 13, color: TK.body, lineHeight: 1.7, marginBottom: 18 }}>
-          请填写<span style={{ fontWeight: 600 }}>运行 API 程序的服务器 / 电脑</span>的公网 IP，该 IP 将绑定你的首个 API Key，API 请求仅允许来自白名单 IP。单个 Key 最多绑定 3 个 IP，本期暂不支持 IP 段。
+          IP 白名单为可选项。如需限制，请填写<span style={{ fontWeight: 600 }}>运行 API 程序的服务器 / 电脑</span>的公网 IP；未填写时，该 Key 对所有 IP 有效。单个 Key 最多绑定 3 个 IP，本期暂不支持 IP 段。
         </div>
         <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
           <input value={val} onChange={e => setVal(e.target.value)} placeholder="手动输入 IP"
@@ -686,10 +557,10 @@ function IpScreen({ ips, setIps, onBack, onClose, onNext, showToast }) {
           </div>
         ))}
         {ips.length === 0 && (
-          <div style={{ textAlign: 'center', color: TK.mutedSoft, fontSize: 12, padding: '28px 0' }}>至少添加 1 个 IP</div>
+          <div style={{ textAlign: 'center', color: TK.mutedSoft, fontSize: 12, padding: '28px 0' }}>未设置 IP 白名单，所有 IP 均可调用</div>
         )}
       </div>
-      <FormFooter backText="上一步" nextText="下一步" onBack={onBack} onNext={onNext} nextDisabled={ips.length === 0} />
+      <FormFooter backText="上一步" nextText="下一步" onBack={onBack} onNext={onNext} />
     </div>
   );
 }
@@ -698,7 +569,7 @@ function IpScreen({ ips, setIps, onBack, onClose, onNext, showToast }) {
 function ConfirmScreen({ ips, keyName, setKeyName, onBack, onClose, onConfirm }) {
   const rows = [
     ['签署文件', '《交易适当性补充协议》v0.9\n《API交易風險披露聲明》v1.0'],
-    ['IP 白名单', ips.join('、')],
+    ['IP 白名单', ips.length ? ips.join('、') : '未设置（所有 IP 均可）'],
   ];
   return (
     <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -723,14 +594,17 @@ function ConfirmScreen({ ips, keyName, setKeyName, onBack, onClose, onConfirm })
   );
 }
 
-/* ================= 浅色页 Step5: 开通成功 (Secret 仅此一次) ================= */
+/* ================= 浅色页 Step5: 开通成功 ================= */
 const DEMO_KEY = { key: 'yk_live_9f3Kd72mQx18n4sVwB', secret: 'sk_demo_4f9c2e7a1b8d3f6a5c0e9b2d7f4a6c1e' };
 
 function SuccessScreen({ ip, onDone, showToast }) {
-  const [saved, setSaved] = useState(false);
-  const copy = async (t) => {
+  const copy = async (t, label) => {
     try { await navigator.clipboard.writeText(t); } catch (e) {}
-    showToast('已复制');
+    showToast((label || '内容') + ' 已复制');
+  };
+  const copyAll = () => {
+    const text = `APIKey: ${DEMO_KEY.key}\nAPISecret: ${DEMO_KEY.secret}\n绑定 IP: ${ip || '未设置（所有 IP 均可）'}`;
+    copy(text, '全部信息');
   };
   return (
     <div style={{ background: TK.canvas, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -743,26 +617,26 @@ function SuccessScreen({ ip, onDone, showToast }) {
           <div key={k} style={{ background: TK.surfaceSoft, borderRadius: 14, padding: '14px 16px', marginBottom: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={{ fontSize: 12, color: TK.muted }}>{k}</span>
-              <button onClick={() => copy(v)} style={{ color: TK.blue, fontSize: 12, fontWeight: 600 }}>复制</button>
+              <button onClick={() => copy(v, k)} style={{ color: TK.blue, fontSize: 12, fontWeight: 600 }}>复制</button>
             </div>
             <div style={{ fontFamily: TK.mono, fontSize: 13, color: TK.ink, wordBreak: 'break-all', lineHeight: 1.6 }}>{v}</div>
           </div>
         ))}
-        <div style={{ background: 'rgba(207,32,47,0.06)', border: '1px solid rgba(207,32,47,0.25)', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: TK.down, lineHeight: 1.6, marginBottom: 14 }}>
-          APISecret 仅此一次明文展示，离开本页后将无法再次查看，请立即妥善保存。
+        <div style={{ background: TK.surfaceSoft, borderRadius: 14, padding: '12px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: TK.muted, marginBottom: 4 }}>绑定 IP</div>
+          <div style={{ fontFamily: TK.mono, fontSize: 13, color: TK.ink, wordBreak: 'break-all' }}>{ip || '未设置（所有 IP 均可）'}</div>
         </div>
-        <div style={{ fontSize: 12, color: TK.muted, marginBottom: 20 }}>
-          绑定 IP：<span style={{ fontFamily: TK.mono, color: TK.ink }}>{ip}</span>
-        </div>
-        <CheckItem checked={saved} onToggle={() => setSaved(!saved)} label="我已妥善保存 APISecret，知晓其不会再次展示。" />
-        <div style={{ marginTop: 18 }}>
+        <button onClick={copyAll} style={{
+          width: '100%', height: 44, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 14,
+        }}>复制全部</button>
+        <div style={{ marginTop: 6 }}>
           <button style={{ color: TK.blue, fontSize: 13 }}>查看接入文档 ›</button>
         </div>
       </div>
       <div style={{ padding: '12px 20px 22px' }}>
-        <button onClick={onDone} disabled={!saved} style={{
+        <button onClick={onDone} style={{
           width: '100%', height: 50, borderRadius: 100, fontSize: 16, fontWeight: 600,
-          background: saved ? TK.blue : TK.blueDisabled, color: '#fff', cursor: saved ? 'pointer' : 'not-allowed',
+          background: TK.blue, color: '#fff',
         }}>完成</button>
       </div>
     </div>
@@ -774,11 +648,13 @@ Object.assign(window, { AgreementScreen, IpScreen, ConfirmScreen, SuccessScreen,
 
 <script type="text/babel">
 /* ================= 深色页: 管理页 (已开通 / 已暂停) ================= */
-function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, onNewKey, onRenameKey, onTerminate, showToast }) {
+const maskKey = (s, head, tail) => s.length <= head + tail ? s : s.slice(0, head) + '•'.repeat(Math.max(4, s.length - head - tail)) + s.slice(-tail);
+
+function ManageScreen({ suspended, keys, token, onBack, onRenew, onDeleteKey, onNewKey, onSetActiveKey, onRenameKey, onTerminate, showToast }) {
   const [confirm, setConfirm] = useState(null);   // {type:'delete'|'terminate', id}
   const [pwdAction, setPwdAction] = useState(null); // {title, sub, run}
-  const [newSecret, setNewSecret] = useState(null); // {name, key, secret}
-  const [savedNew, setSavedNew] = useState(false);
+  const [newSecret, setNewSecret] = useState(null); // {name, key, secret, ip}
+  const [viewKey, setViewKey] = useState(null);     // 当前通过密码验证要查看完整信息的 key
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [newKeyOpen, setNewKeyOpen] = useState(false);
@@ -788,6 +664,10 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
   const KEY_LIMIT = 3;
 
   const copyText = async (t, msg) => { try { await navigator.clipboard.writeText(t); } catch (e) {} showToast(msg || '已复制'); };
+  const copyAll = (k) => {
+    const text = `APIKey: ${k.key}\nAPISecret: ${k.secret}\n绑定 IP: ${k.ip || '未设置（所有 IP 均可）'}`;
+    copyText(text, '全部信息已复制');
+  };
 
   const scrollTop = () => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; };
   const askPwd = (title, sub, run) => { scrollTop(); setPwdAction({ title, sub, run }); };
@@ -796,6 +676,12 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
     ['接入文档', 'OpenAPI 开发者文档与 SDK'],
     ['行情权限', '美股等部分品种实时行情需购买行情卡 → 行情商城'],
   ];
+
+  const statusText = (k) => {
+    if (suspended || k.paused) return { label: '已暂停', color: TK.yellow, border: TK.yellow };
+    if (k.active) return { label: '生效中', color: TK.up, border: TK.up };
+    return { label: '未生效', color: TK.mutedSoft, border: TK.mutedSoft };
+  };
 
   return (
     <div style={{ background: TK.dark, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -810,27 +696,27 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
           </div>
         )}
 
-        {/* ticket 状态卡：0 Key 时为「未生效」态 */}
+        {/* token 状态卡：0 Key 时为「未生效」态 */}
         <div style={{
           background: TK.darkCard, borderRadius: 16, padding: '16px 18px', marginBottom: 12,
           opacity: suspended ? 0.5 : 1,
-          border: (keys.length > 0 && !ticket.valid) ? `1px solid rgba(244,176,0,0.45)` : 'none',
+          border: (keys.length > 0 && !token.valid) ? `1px solid rgba(244,176,0,0.45)` : 'none',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>交易会话（ticket）</span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: keys.length === 0 ? TK.mutedSoft : (ticket.valid ? TK.up : TK.yellow) }}>
-              {keys.length === 0 ? '● 未生效' : (ticket.valid ? '● 有效' : '● 已过期')}
+            <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>交易会话（token）</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: keys.length === 0 ? TK.mutedSoft : (token.valid ? TK.up : TK.yellow) }}>
+              {keys.length === 0 ? '● 未生效' : (token.valid ? '● 有效' : '● 已过期')}
             </span>
           </div>
           {keys.length === 0 ? (
             <div style={{ color: TK.mutedSoft, fontSize: 12 }}>创建 API Key 并发起首次连接后生效</div>
           ) : (
-            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: ticket.valid ? 0 : 12 }}>到期时间 <span style={{ fontFamily: TK.mono, color: '#fff' }}>{ticket.expiry}</span></div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: token.valid ? 0 : 12 }}>到期时间 <span style={{ fontFamily: TK.mono, color: '#fff' }}>{token.expiry}</span></div>
           )}
-          {keys.length > 0 && !ticket.valid && !suspended && (
+          {keys.length > 0 && !token.valid && !suspended && (
             <React.Fragment>
               <div style={{ color: TK.yellow, fontSize: 11, marginBottom: 10, lineHeight: 1.5 }}>会话已过期，API 交易调用将被拒绝，续期后恢复。</div>
-              <button onClick={() => askPwd('验证交易密码', '续期交易会话（ticket）', onRenew)}
+              <button onClick={() => askPwd('验证交易密码', '续期交易会话（token）', onRenew)}
                 style={{ height: 38, padding: '0 18px', borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 13, fontWeight: 600 }}>去续期</button>
             </React.Fragment>
           )}
@@ -840,6 +726,7 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
         <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, margin: '16px 2px 10px' }}>API Key（{keys.length}/{KEY_LIMIT}）</div>
         {keys.map(k => {
           const kp = suspended || k.paused;
+          const st = statusText(k);
           return (
           <div key={k.id} style={{ background: TK.darkCard, borderRadius: 16, padding: '14px 16px', marginBottom: 10, opacity: kp ? 0.55 : 1, border: k.paused ? `1px solid rgba(244,176,0,0.4)` : 'none' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -857,30 +744,36 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
                   {!kp && <button onClick={() => { setEditingId(k.id); setEditName(k.name); }} style={{ color: TK.mutedSoft, fontSize: 13, padding: 2 }}>✎</button>}
                 </span>
               )}
-              <span style={{ fontSize: 10, color: kp ? TK.yellow : TK.up, border: `1px solid ${kp ? TK.yellow : TK.up}`, borderRadius: 100, padding: '1px 8px' }}>{kp ? '已暂停' : '正常'}</span>
+              <span style={{ fontSize: 10, color: st.color, border: `1px solid ${st.border}`, borderRadius: 100, padding: '1px 8px' }}>{st.label}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontFamily: TK.mono, fontSize: 12, color: TK.onDarkSoft, flex: 1 }}>{maskKey(k.key, 7, 4)}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontFamily: TK.mono, fontSize: 12, color: TK.onDarkSoft }}>{k.key.slice(0, 7)}••••••••{k.key.slice(-4)}</span>
-              <button onClick={() => copyText(k.key, 'APIKey 已复制')} style={{ color: TK.blueOnDark, fontSize: 11, fontWeight: 600 }}>复制</button>
+              <span style={{ fontFamily: TK.mono, fontSize: 12, color: TK.onDarkSoft, flex: 1 }}>{maskKey(k.secret, 6, 6)}</span>
             </div>
             <div style={{ color: TK.mutedSoft, fontSize: 11, lineHeight: 1.7 }}>
-              绑定 IP <span style={{ fontFamily: TK.mono }}>{k.ip}</span> · 创建于 {k.created}
+              绑定 IP <span style={{ fontFamily: TK.mono }}>{k.ip || '未设置（所有 IP 均可）'}</span> · 创建于 {k.created}
             </div>
             {k.paused && !suspended && (
               <div style={{ color: TK.yellow, fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>该 Key 已被风控暂停，仅支持只读查看；恢复请联系客服或风控复核。</div>
             )}
-            {!kp && (
-              <div style={{ textAlign: 'right', marginTop: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 14, marginTop: 8 }}>
+              <button onClick={() => askPwd('验证交易密码', '查看完整 APIKey / APISecret', () => setViewKey(k))} style={{ color: TK.blueOnDark, fontSize: 12, fontWeight: 600 }}>查看</button>
+              {!kp && !k.active && (
+                <button onClick={() => { onSetActiveKey(k.id); showToast(k.name + ' 已设为生效'); }} style={{ color: TK.up, fontSize: 12, fontWeight: 600 }}>设为生效</button>
+              )}
+              {!kp && (
                 <button onClick={() => { scrollTop(); setConfirm({ type: 'delete', id: k.id }); }} style={{ color: '#ff6b75', fontSize: 12 }}>删除</button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
           );
         })}
         {!suspended && keys.length === 0 && (
           <div style={{ background: TK.darkCard, borderRadius: 16, padding: '24px 20px', textAlign: 'center', marginBottom: 10 }}>
             <div style={{ color: '#fff', fontSize: 15, fontWeight: 600, marginBottom: 6 }}>创建你的首个 API Key</div>
-            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.7 }}>设置名称并绑定 IP 白名单后创建；APISecret 仅在创建时展示一次，请当场保存，如遗失可删除后新建。</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.7 }}>设置名称并选择是否绑定 IP 白名单；创建后可在管理页通过交易密码验证随时查看完整 APIKey 与 APISecret。</div>
           </div>
         )}
         {!suspended && (
@@ -948,7 +841,7 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
             <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: 6 }}>API Key 名称</div>
             <input value={draftName} onChange={e => setDraftName(e.target.value)} maxLength={20}
               style={{ width: '100%', height: 46, borderRadius: 12, background: TK.dark, border: `1px solid ${TK.darkLine}`, color: '#fff', fontSize: 14, padding: '0 14px', marginBottom: 16 }} />
-            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: 6, lineHeight: 1.5 }}>绑定 IP 白名单（运行 API 程序的服务器/电脑公网 IP，最多 3 个）</div>
+            <div style={{ color: TK.onDarkSoft, fontSize: 12, marginBottom: 6, lineHeight: 1.5 }}>绑定 IP 白名单（选填；未填写时该 Key 对所有 IP 有效，最多 3 个）</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
               <input value={draftVal} onChange={e => setDraftVal(e.target.value)} placeholder="手动输入 IP"
                 style={{ flex: 1, height: 44, borderRadius: 12, background: TK.dark, border: `1px solid ${TK.darkLine}`, color: '#fff', fontSize: 13, fontFamily: TK.mono, padding: '0 12px' }} />
@@ -960,24 +853,26 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
                 setDraftIps([...draftIps, v]); setDraftVal('');
               }} style={{ width: 76, height: 44, borderRadius: 100, border: `1.5px solid ${TK.blueOnDark}`, color: TK.blueOnDark, fontSize: 13, fontWeight: 600 }}>添加</button>
             </div>
+            {draftIps.length === 0 && (
+              <div style={{ color: TK.mutedSoft, fontSize: 12, textAlign: 'center', padding: '10px 0 16px' }}>未设置 IP 白名单，所有 IP 均可调用</div>
+            )}
             {draftIps.map(ip => (
               <div key={ip} style={{ display: 'flex', alignItems: 'center', background: TK.dark, borderRadius: 10, padding: '10px 12px', marginBottom: 6 }}>
                 <span style={{ fontFamily: TK.mono, fontSize: 13, color: '#fff' }}>{ip}</span>
                 <span style={{ marginLeft: 'auto', color: TK.mutedSoft, fontSize: 12, cursor: 'pointer' }} onClick={() => setDraftIps(draftIps.filter(x => x !== ip))}>删除</span>
               </div>
             ))}
-            <div style={{ color: TK.mutedSoft, fontSize: 11, lineHeight: 1.6, margin: '10px 0 16px' }}>创建后 APISecret 仅展示一次，请当场保存；如遗失可删除后新建。</div>
-            <button disabled={!draftName.trim() || draftIps.length === 0}
+            <button disabled={!draftName.trim()}
               onClick={() => {
                 const ips0 = draftIps.join('、');
                 const name0 = draftName.trim();
                 setNewKeyOpen(false);
                 askPwd('验证交易密码', '创建新的 API Key', () => {
                   const nk = { id: 'k' + Date.now(), name: name0, key: 'yk_live_new' + Math.random().toString(36).slice(2, 10) + 'X9q', secret: 'sk_demo_' + Math.random().toString(36).slice(2, 18) + Math.random().toString(36).slice(2, 8), ip: ips0, created: '2026-08-25' };
-                  setNewSecret(nk); setSavedNew(false);
+                  setNewSecret(nk);
                 });
               }}
-              style={{ width: '100%', height: 48, borderRadius: 100, fontSize: 15, fontWeight: 600, background: (!draftName.trim() || draftIps.length === 0) ? TK.darkLine : TK.blue, color: '#fff' }}>验证交易密码并创建</button>
+              style={{ width: '100%', height: 48, borderRadius: 100, fontSize: 15, fontWeight: 600, background: !draftName.trim() ? TK.darkLine : TK.blue, color: '#fff' }}>验证交易密码并创建</button>
           </div>
         </PhoneOverlay>
       )}
@@ -985,23 +880,50 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
         <PhoneOverlay>
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.55)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28, animation: 'fadeIn 0.2s' }}>
           <div style={{ width: '100%', background: TK.canvas, borderRadius: 20, padding: '22px 20px', animation: 'sheetUp 0.25s ease' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color: TK.ink, marginBottom: 4 }}>{newSecret.name} 创建成功</div>
-            <div style={{ fontSize: 11, color: TK.muted, marginBottom: 4 }}>绑定 IP <span style={{ fontFamily: TK.mono }}>{newSecret.ip}</span></div>
-            <div style={{ fontSize: 11, color: TK.down, marginBottom: 12 }}>APISecret 仅此一次展示，请立即保存；如遗失可删除后新建</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: TK.ink }}>{newSecret.name} 创建成功</div>
+              <button onClick={() => { onNewKey(newSecret); setNewSecret(null); showToast('新 Key 已创建'); }} style={{ color: TK.muted, fontSize: 18, padding: 4 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 11, color: TK.muted, marginBottom: 14 }}>该 Key 已自动设为「生效中」，其他 Key 已变为未生效</div>
             {[['APIKey', newSecret.key], ['APISecret', newSecret.secret]].map(([label, val]) => (
               <div key={label} style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 11, color: TK.muted }}>{label}</span>
-                  <button onClick={() => copyText(val, label + ' 已复制')} style={{ color: TK.blue, fontSize: 11, fontWeight: 600 }}>复制</button>
-                </div>
-                <div style={{ fontFamily: TK.mono, fontSize: 12, color: TK.ink, wordBreak: 'break-all', lineHeight: 1.6, background: TK.surfaceSoft, borderRadius: 10, padding: '10px 12px', marginTop: 4 }}>{val}</div>
+                <div style={{ fontSize: 11, color: TK.muted, marginBottom: 4 }}>{label}</div>
+                <div style={{ fontFamily: TK.mono, fontSize: 12, color: TK.ink, wordBreak: 'break-all', lineHeight: 1.6, background: TK.surfaceSoft, borderRadius: 10, padding: '10px 12px' }}>{val}</div>
               </div>
             ))}
-            <CheckItem checked={savedNew} onToggle={() => setSavedNew(!savedNew)} label="我已妥善保存 APISecret。" />
-            <button disabled={!savedNew} onClick={() => { onNewKey(newSecret); setNewSecret(null); showToast('新 Key 已创建'); }}
-              style={{ width: '100%', height: 44, borderRadius: 100, marginTop: 14, fontSize: 15, fontWeight: 600, background: savedNew ? TK.blue : TK.blueDisabled, color: '#fff' }}>完成</button>
+            <div style={{ background: TK.surfaceSoft, borderRadius: 14, padding: '12px 16px', marginBottom: 14 }}>
+              <div style={{ fontSize: 11, color: TK.muted, marginBottom: 4 }}>绑定 IP</div>
+              <div style={{ fontFamily: TK.mono, fontSize: 12, color: TK.ink, wordBreak: 'break-all' }}>{newSecret.ip || '未设置（所有 IP 均可）'}</div>
+            </div>
+            <button onClick={() => { copyAll(newSecret); onNewKey(newSecret); setNewSecret(null); showToast('新 Key 已创建'); }}
+              style={{ width: '100%', height: 44, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 14, fontWeight: 600 }}>复制全部</button>
           </div>
         </div>
+        </PhoneOverlay>
+      )}
+      {viewKey && (
+        <PhoneOverlay>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.55)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28, animation: 'fadeIn 0.2s' }}>
+            <div style={{ width: '100%', background: TK.canvas, borderRadius: 20, padding: '22px 20px', animation: 'sheetUp 0.25s ease' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: TK.ink }}>{viewKey.name} 完整信息</div>
+                <button onClick={() => setViewKey(null)} style={{ color: TK.muted, fontSize: 18, padding: 4 }}>✕</button>
+              </div>
+              {[['APIKey', viewKey.key], ['APISecret', viewKey.secret]].map(([label, val]) => (
+                <div key={label} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, color: TK.muted, marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontFamily: TK.mono, fontSize: 12, color: TK.ink, wordBreak: 'break-all', lineHeight: 1.6, background: TK.surfaceSoft, borderRadius: 10, padding: '10px 12px' }}>{val}</div>
+                </div>
+              ))}
+              <div style={{ background: TK.surfaceSoft, borderRadius: 14, padding: '12px 16px', marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: TK.muted, marginBottom: 4 }}>绑定 IP</div>
+                <div style={{ fontFamily: TK.mono, fontSize: 12, color: TK.ink, wordBreak: 'break-all' }}>{viewKey.ip || '未设置（所有 IP 均可）'}</div>
+              </div>
+              <button onClick={() => { copyAll(viewKey); setViewKey(null); }}
+                style={{ width: '100%', height: 44, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 14 }}>复制全部</button>
+              <div style={{ fontSize: 11, color: TK.muted, textAlign: 'center' }}>创建于 {viewKey.created}</div>
+            </div>
+          </div>
         </PhoneOverlay>
       )}
     </div>
@@ -1009,7 +931,7 @@ function ManageScreen({ suspended, keys, ticket, onBack, onRenew, onDeleteKey, o
 }
 
 /* ================= PhoneApp: 状态机 ================= */
-function PhoneApp({ status, setStatus, screen, setScreen, showToast, ticket, setTicket, keys, setKeys }) {
+function PhoneApp({ status, setStatus, screen, setScreen, showToast, token, setToken, keys, setKeys, gate }) {
   const [pwd, setPwd] = useState(null);
   const [rejected, setRejected] = useState(false);
   const [quizA, setQuizA] = useState({});
@@ -1029,7 +951,10 @@ function PhoneApp({ status, setStatus, screen, setScreen, showToast, ticket, set
 
   const screens = {
     services: <ServicesScreen onEnter={enterApi} />,
-    intro: <IntroScreen rejected={rejected} onBack={() => setScreen('services')} onApply={() => { setRejected(false); setScreen('quiz'); }} />,
+    intro: <IntroScreen rejected={rejected} gate={gate} onBack={() => setScreen('services')} onApply={() => { setRejected(false); setScreen('quiz'); }}
+      onOpenAccount={() => showToast('跳转开户流程（Demo）；开户成功后恢复可申请')}
+      onDoRisk={() => showToast('跳转风险测评页（Demo）；完成测评后恢复可申请')}
+      onUpdateRisk={() => showToast('跳转风险测评页（Demo）；评级更新后恢复可申请')} />,
     reviewing: <ReviewingScreen onBack={() => setScreen('services')}
       onPass={() => { showToast('审核通过（模拟）'); setScreen('agreement'); }}
       onReject={() => { setStatus('none'); setRejected(true); setScreen('intro'); }} />,
@@ -1044,11 +969,17 @@ function PhoneApp({ status, setStatus, screen, setScreen, showToast, ticket, set
       onGiveUp={() => { setRejected(true); setQuizA({}); setQuizOthers({}); setScreen('intro'); }} />,
     agreement: <AgreementScreen onBack={() => setScreen('quiz')} onClose={() => setScreen('intro')}
       onNext={() => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; setPwd(true); }} />,
-    manage: <ManageScreen suspended={status === 'suspended'} keys={keys} ticket={ticket}
+    manage: <ManageScreen suspended={status === 'suspended'} keys={keys} token={token}
       onBack={() => setScreen('services')} showToast={showToast}
-      onRenew={() => { setTicket({ valid: true, expiry: '2026-09-08 23:59' }); showToast('续期成功，有效期至 2026-09-08'); }}
-      onDeleteKey={(id) => setKeys(keys.filter(k => k.id !== id))}
-      onNewKey={(nk) => setKeys([...keys, nk])}
+      onRenew={() => { setToken({ valid: true, expiry: '2026-09-08 23:59' }); showToast('续期成功，有效期至 2026-09-08'); }}
+      onDeleteKey={(id) => {
+        const wasActive = keys.find(k => k.id === id)?.active;
+        const next = keys.filter(k => k.id !== id);
+        if (wasActive && next.length) next[0].active = true;
+        setKeys(next);
+      }}
+      onNewKey={(nk) => setKeys([...keys.map(k => ({ ...k, active: false })), { ...nk, active: true }])}
+      onSetActiveKey={(id) => setKeys(keys.map(k => ({ ...k, active: k.id === id })))}
       onRenameKey={(id, name) => setKeys(keys.map(k => k.id === id ? { ...k, name } : k))}
       onTerminate={() => { setStatus('none'); setKeys([]); setScreen('intro'); showToast('已注销 API 交易服务'); }} />,
   };
@@ -1070,7 +1001,7 @@ const SCENARIOS = [
   ['none', '未开通'], ['reviewing', '审核中'], ['opened', '已开通'], ['suspended', '已暂停'],
 ];
 const FLOW = [
-  ['services', '全部服务（入口）'], ['intro', 'API 交易 · 介绍页'], ['quiz', 'Step1 问卷'],
+  ['services', '全部服务（入口）'], ['intro', 'API 交易 · 介绍页'], ['quiz', 'Step1 问卷（章节分页 ×4）'],
   ['agreement', 'Step2 协议签署（签署即开通）'], ['manage', '管理页 / 创建 Key'],
   ['notApproved', '不予通过结果页'], ['reviewing', '审核中'],
 ];
@@ -1078,7 +1009,8 @@ const FLOW = [
 function App() {
   const [status, setStatusRaw] = useState('none');
   const [screen, setScreenRaw] = useState('services');
-  const [ticket, setTicket] = useState({ valid: true, expiry: '2026-09-01 23:59' });
+  const [gate, setGate] = useState('');   // 资格预检: '' 可申请 | 'unopened' 未开户成功 | 'needrisk' 未做/过期风险测评 | 'risk' 风险评级不符 | 'whitelist' 灰度白名单拦截
+  const [token, setToken] = useState({ valid: true, expiry: '2026-09-01 23:59' });
   const [keys, setKeys] = useState([]);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -1091,8 +1023,9 @@ function App() {
   const setScreen = (s) => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; setScreenRaw(s); };
   const jumpScenario = (s) => {
     setStatusRaw(s);
+    setGate('');
     if ((s === 'opened' || s === 'suspended') && keys.length === 0) {
-      setKeys([{ id: 'k1', name: 'API Key 1', key: DEMO_KEY.key, secret: DEMO_KEY.secret, ip: '203.0.113.10', created: '2026-08-25' }]);
+      setKeys([{ id: 'k1', name: 'API Key 1', key: DEMO_KEY.key, secret: DEMO_KEY.secret, ip: '203.0.113.10', created: '2026-08-25', active: true }]);
     }
     if (s === 'none') setScreen('intro');
     else if (s === 'reviewing') setScreen('reviewing');
@@ -1110,8 +1043,8 @@ function App() {
       <div style={panelStyles.wrap}>
         <div style={{ marginBottom: 22 }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#0a0b0d' }}>云锋有鱼 · OpenAPI</div>
-          <div style={{ fontSize: 13, color: '#5b616e', marginTop: 4 }}>申请与管理 Flow Demo · 2026-08-25</div>
-          <div style={{ fontSize: 11, color: '#a8acb3', marginTop: 6, lineHeight: 1.6 }}>依据 2026-08-24 设计文档（8/25 更新）；视觉遵循 DESIGN-visual.md + APP 实际形态（深色主界面 / 浅色表单流）。</div>
+          <div style={{ fontSize: 13, color: '#5b616e', marginTop: 4 }}>申请与管理 Flow Demo v2 · 2026-08-28</div>
+          <div style={{ fontSize: 11, color: '#a8acb3', marginTop: 6, lineHeight: 1.6 }}>依据 2026-08-28 v2 设计文档（基于 8/24 版副本调整）；视觉遵循 DESIGN-visual.md + APP 实际形态（深色主界面 / 浅色表单流）。</div>
         </div>
         <div style={panelStyles.card}>
           <div style={panelStyles.h}>DEMO 场景（非产品 UI）</div>
@@ -1123,19 +1056,28 @@ function App() {
               }}>{label}</button>
             ))}
           </div>
-          <div style={{ fontSize: 11, color: '#a8acb3', margin: '12px 0 6px' }}>ticket 状态模拟（管理页可见）：</div>
+          <div style={{ fontSize: 11, color: '#a8acb3', margin: '12px 0 6px' }}>资格预检模拟（介绍页拦截态）：</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {[['', '可申请'], ['unopened', '未开户成功'], ['needrisk', '未做风险测评'], ['risk', '风险评级不符'], ['whitelist', '灰度白名单拦截']].map(([v, label]) => (
+              <button key={label} onClick={() => { setGate(v); setStatusRaw('none'); setScreen('intro'); }} style={{
+                height: 30, padding: '0 12px', borderRadius: 100, fontSize: 11, fontWeight: 600,
+                background: gate === v ? '#0a0b0d' : '#eef0f3', color: gate === v ? '#fff' : '#0a0b0d',
+              }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#a8acb3', margin: '12px 0 6px' }}>token 状态模拟（管理页可见）：</div>
           <div style={{ display: 'flex', gap: 8 }}>
             {[[true, '有效'], [false, '已过期']].map(([v, label]) => (
-              <button key={label} onClick={() => setTicket({ valid: v, expiry: v ? '2026-09-01 23:59' : '2026-08-24 23:59' })} style={{
+              <button key={label} onClick={() => setToken({ valid: v, expiry: v ? '2026-09-01 23:59' : '2026-08-24 23:59' })} style={{
                 height: 30, padding: '0 12px', borderRadius: 100, fontSize: 11, fontWeight: 600,
-                background: ticket.valid === v ? '#0a0b0d' : '#eef0f3', color: ticket.valid === v ? '#fff' : '#0a0b0d',
+                background: token.valid === v ? '#0a0b0d' : '#eef0f3', color: token.valid === v ? '#fff' : '#0a0b0d',
               }}>{label}</button>
             ))}
           </div>
           <div style={{ fontSize: 11, color: '#a8acb3', margin: '12px 0 6px' }}>风控动作模拟（单 Key 暂停，中台已实现）：</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => {
-              if (keys.length === 0) setKeys([{ id: 'k1', name: 'API Key 1', key: DEMO_KEY.key, secret: DEMO_KEY.secret, ip: '203.0.113.10', created: '2026-08-25', paused: true }]);
+              if (keys.length === 0) setKeys([{ id: 'k1', name: 'API Key 1', key: DEMO_KEY.key, secret: DEMO_KEY.secret, ip: '203.0.113.10', created: '2026-08-25', active: true, paused: true }]);
               else setKeys(keys.map((k, i) => i === 0 ? { ...k, paused: true } : k));
               if (status === 'opened' || status === 'suspended') setScreen('manage');
             }} style={{ height: 30, padding: '0 12px', borderRadius: 100, fontSize: 11, fontWeight: 600, background: keys[0] && keys[0].paused ? '#0a0b0d' : '#eef0f3', color: keys[0] && keys[0].paused ? '#fff' : '#0a0b0d' }}>暂停 Key 1</button>
@@ -1154,13 +1096,13 @@ function App() {
           ))}
         </div>
         <div style={{ fontSize: 11, color: '#a8acb3', lineHeight: 1.7, padding: '0 4px' }}>
-          演示要点（问卷为 202608 final 全量题目 + 8/25 结构化改造）：1.1 选「无」观察渐进隐藏子题与 1.2；经验不足 1 年（含无经验）或 3.1 选「长期资本增值」→ 4.1 做市/高频置灰；每日频率少于 50 笔 → 1.2 高频置灰；3.2 选「平衡型」→ 3.3「是」置灰，选「保守/稳健型」→ 警示；任一组选「其他」并填空 → 提交后转人工审核；回改先答题 → 冲突答案自动清除并提示「需重新确认」。选择「做市」或「高频交易」的客户，开通后将自动通知交易部/风险部/合规部（后台动作，页面不呈现）。确认提交页：API Key 名称可修改；「确认开通」唤起交易密码验证，一次验证同时完成协议签署留痕与创建首个 Key。
+          演示要点（v2：问卷为 20260828 版全量 19 题，按 4 章节分页、选项题下平铺、按页必答校验）：1.1 选「無」→ 子题与 1.2 不展示；无经验或经验不足 1 年、或 3.1 选「長期資本增值」→ 4.1 做市/高頻置灰；每日频率少于 50 筆 → 1.2 高頻置灰；置灰选项原位旁注统一提示；任一「其他」填空 → 提交后转人工审核；回改先答题 → 冲突答案清除并标记「需重新確認」。风险承受能力题已删除，改为介绍页入口拦截（仅进取型/激进型可申请，面板可预览拦截态）。介绍页资格预检三门槛：已开户成功、风险测评且为进取型/激进型、在灰度白名单内；未开户/未做测评/测评不符/不在白名单均置灰并引导。选择「做市」或「高頻交易」的客户，开通后将自动通知交易部/风险部/合规部（后台动作，页面不呈现）。协议「完成签署并开通」唤起交易密码验证，一次验证完成签署留痕与开通，随后落管理页创建首个 Key。Key 管理策略：同一账户可创建多个 Key，但仅有一个「生效中」；新建 Key 自动生效并切换其他 Key 为未生效；APIKey / APISecret 均做掩码展示，点击「查看」需校验交易密码后弹窗展示完整信息并支持复制全部；创建成功弹窗同样支持复制全部；IP 白名单改为非必填，未填写时该 Key 对所有 IP 有效。
         </div>
       </div>
 
       <div style={{ position: 'sticky', top: 24 }}>
         <IosFrame darkMode time="9:41" battery={85}>
-          <PhoneApp status={status} setStatus={setStatus} screen={screen} setScreen={setScreen} showToast={showToast} ticket={ticket} setTicket={setTicket} keys={keys} setKeys={setKeys} />
+          <PhoneApp status={status} setStatus={setStatus} screen={screen} setScreen={setScreen} showToast={showToast} token={token} setToken={setToken} keys={keys} setKeys={setKeys} gate={gate} />
           <Toast text={toast} />
         </IosFrame>
       </div>
@@ -1172,124 +1114,50 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 </script>
 <script type="text/babel">
-/* ================= Step1 问卷 v2: 全量题目 + 半屏选择器（对齐开户页面选择器形态） ================= */
+/* ================= Step1 问卷 v2: 20260828 版全量题目 · 按章节分页 · 选项平铺 =================
+   - 4 个章节分 4 页, 顶部 LightNav 分段进度条 + 章节名, 底部上一步/下一步(末页提交)
+   - 选项直接平铺在题下 (单选/多选卡片), 废弃半屏选择器
+   - 联动置灰 3 条 (MVP 硬编码): ②无经验或经验不足1年 → 4.1 做市/高频置灰;
+     ③每日频率<50笔 → 1.2 高频置灰; ④3.1 选「長期資本增值」→ 4.1 做市/高频置灰
+   - 1.1 选「無」→ 子题与 1.2 渐进隐藏; 回改先答题 → 清除冲突答案并标记「需重新確認」
+   - 任一「其他」填空有内容 → 提交后转人工审核 */
 
-// 半屏选择器：单选点选即关，多选带确定栏；置灰选项不可点并附统一提示
-function SheetSelect({ title, options, multi, selected, disabledMap, onChange, onClose }) {
-  const anyDisabled = options.some(o => disabledMap && disabledMap[o]);
-  const sel = multi ? selected : (selected ? [selected] : []);
-  const tap = (v) => {
-    if (disabledMap && disabledMap[v]) return;
-    if (multi) onChange(sel.includes(v) ? sel.filter(x => x !== v) : [...sel, v]);
-    else { onChange(v); onClose(); }
-  };
-  return (
-    <PhoneOverlay>
-    <div style={{ position: 'absolute', inset: 0, zIndex: 50 }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(10,11,13,0.5)', animation: 'fadeIn 0.2s' }} />
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '72%', background: TK.canvas, borderRadius: '20px 20px 0 0', display: 'flex', flexDirection: 'column', animation: 'sheetUp 0.28s ease' }}>
-        <div style={{ display: 'flex', alignItems: 'center', height: 52, padding: '0 10px', borderBottom: `1px solid ${TK.hairlineSoft}`, flexShrink: 0 }}>
-          <button onClick={onClose} style={{ fontSize: 18, color: TK.ink, padding: '4px 10px' }}>✕</button>
-          <div style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 600, color: TK.ink, marginRight: 38 }}>{title}</div>
-        </div>
-        <div style={{ overflow: 'auto', padding: '4px 20px' }}>
-          {options.map(o => {
-            const dis = disabledMap && disabledMap[o];
-            const on = sel.includes(o);
-            return (
-              <button key={o} onClick={() => tap(o)} style={{
-                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
-                padding: '15px 2px', borderBottom: `1px solid ${TK.hairlineSoft}`,
-                cursor: dis ? 'not-allowed' : 'pointer', opacity: dis ? 0.45 : 1,
-              }}>
-                {multi && (
-                  <span style={{
-                    width: 18, height: 18, borderRadius: 5, flexShrink: 0,
-                    border: on ? 'none' : `1.5px solid ${TK.mutedSoft}`,
-                    background: on ? TK.blue : 'transparent',
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#fff', fontSize: 11, fontWeight: 700,
-                  }}>{on ? '✓' : ''}</span>
-                )}
-                <span style={{ fontSize: 15, color: dis ? TK.muted : TK.ink, flex: 1, lineHeight: 1.5 }}>
-                  {o}{dis ? <span style={{ fontSize: 11, color: TK.mutedSoft }}>（不可选）</span> : ''}
-                </span>
-                {!multi && on && <span style={{ color: TK.blue, fontSize: 16, fontWeight: 700 }}>✓</span>}
-              </button>
-            );
-          })}
-          {anyDisabled && (
-            <div style={{ fontSize: 11, color: TK.muted, padding: '10px 2px', lineHeight: 1.5 }}>
-              ⓘ 与已选答案存在逻辑冲突的选项已置灰 — {FAIL_HINT}
-            </div>
-          )}
-        </div>
-        {multi && (
-          <div style={{ padding: '10px 20px 18px', borderTop: `1px solid ${TK.hairlineSoft}`, flexShrink: 0 }}>
-            <button onClick={onClose} style={{ width: '100%', height: 46, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 15, fontWeight: 600 }}>确定（已选 {sel.length} 项）</button>
-          </div>
-        )}
-      </div>
-    </div>
-    </PhoneOverlay>
-  );
-}
-
-// 字段行：显示已选值，点击打开半屏选择器
-function FieldRow({ display, error, reconfirm, onOpen }) {
-  return (
-    <div>
-      <button onClick={onOpen} style={{
-        width: '100%', minHeight: 50, borderRadius: 12, background: TK.canvas,
-        border: `1.5px solid ${error ? TK.down : TK.hairlineSoft}`,
-        display: 'flex', alignItems: 'center', padding: '12px 14px', textAlign: 'left',
-      }}>
-        <span style={{ flex: 1, fontSize: 14, color: display ? TK.ink : TK.mutedSoft, lineHeight: 1.5 }}>{display || '请选择'}</span>
-        <span style={{ color: TK.mutedSoft, fontSize: 14, marginLeft: 8 }}>⌄</span>
-      </button>
-      {error && <div style={{ fontSize: 11, color: TK.down, marginTop: 5 }}>此题为必答</div>}
-      {reconfirm && <div style={{ fontSize: 11, color: '#b57f00', marginTop: 5 }}>⚠ 因先前答案变更，此题需重新确认</div>}
-    </div>
-  );
-}
-
-// 全量题目配置（202608 final 版 + 8/25 结构化改造：4.1.3 拆三维度、4.2.2 预设多选）
 const QUIZ_SECTIONS = ['第一部分：API交易與投資經驗', '第二部分：技術能力評估', '第三部分：投資目標與風險承受能力', '第四部分：API交易算法說明'];
+const EXP_OPTS = ['無', '有，但已終止', '有，目前正在使用'];
+const hasExpAns = (v) => v === '有，但已終止' || v === '有，目前正在使用';
+
 const QUESTIONS = [
-  { id: 'q11', sec: 0, short: 'API 交易经验', text: '1.1 您是否有過使用 API 進行證券交易的經驗？', type: 's', opts: ['无', '有，但已终止', '有，目前正在使用'] },
-  { id: 'q11a', sec: 0, short: '经验年限', text: '1.1.1 如曾使用 API 進行交易，請說明使用經驗年限', type: 's', opts: ['6个月以下', '6个月-1年', '1-3年', '3年以上'], vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
-  { id: 'q11b', sec: 0, short: '交易平台/工具', text: '1.1.2 您曾使用過的 API 交易平台/工具（可多選）', type: 'm', opts: ['券商提供的 API', '第三方交易平台', '自行開發的交易軟件', '量化交易平台', '其他'], otherFill: true, vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
-  { id: 'q11c', sec: 0, short: '交易证券种类', text: '1.1.3 您通常通過 API 交易的證券種類（可多選）', type: 'm', opts: ['港股', '美股', 'A股', 'ETF', '期權', '期貨', '其他'], otherFill: true, vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
-  { id: 'q11d', sec: 0, short: '每日交易频率', text: '1.1.4 您過往通過 API 進行的平均每日交易頻率', type: 's', opts: ['无', '1-10笔', '10-50笔', '50-200笔', '200笔以上'], vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
-  { id: 'q12', sec: 0, short: '自动化交易经验', text: '1.2 您是否有過使用自動化交易策略或算法交易的經驗？', type: 's', opts: ['无', '有，但已终止', '有，目前正在使用'], vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q11) },
-  { id: 'q12a', sec: 0, short: '曾用策略类型', text: '1.2.1 如曾使用自動化交易策略，請簡要描述策略類型（可多選）', type: 'm', opts: ['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '其他'], otherFill: true, vis: a => ['有，但已终止', '有，目前正在使用'].includes(a.q12), dis: (a, R) => ({ '高频交易': R.hfDisabled12 }) },
+  { id: 'q11', sec: 0, text: '您是否有過使用API進行證券交易的經驗？', type: 's', opts: EXP_OPTS },
+  { id: 'q11a', sec: 0, text: '如曾使用API進行交易，請說明使用經驗年限', type: 's', opts: ['6個月以下', '6個月-1年', '1-3年', '3年以上'], vis: a => hasExpAns(a.q11) },
+  { id: 'q11b', sec: 0, text: '您曾使用過的API交易平台/工具（可多選）', type: 'm', opts: ['券商提供的API', '第三方交易平台', '自行開發的交易軟件', '量化交易平台', '其他'], otherFill: true, vis: a => hasExpAns(a.q11) },
+  { id: 'q11c', sec: 0, text: '您通常通過API交易的證券種類（可多選）', type: 'm', opts: ['港股', '美股', 'A股', 'ETF', '期權', '期貨', '其他'], otherFill: true, vis: a => hasExpAns(a.q11) },
+  { id: 'q11d', sec: 0, text: '您過往通過API進行的平均每日交易頻率', type: 's', opts: ['無', '1-10筆', '10-50筆', '50-200筆', '200筆以上'], vis: a => hasExpAns(a.q11) },
+  { id: 'q12', sec: 0, text: '您是否有過使用自動化交易策略或算法交易的經驗？', type: 's', opts: EXP_OPTS, vis: a => hasExpAns(a.q11) },
+  { id: 'q12a', sec: 0, text: '如曾使用自動化交易策略，請簡要描述策略類型', type: 's', opts: ['趨勢跟蹤', '均值回歸', '套利', '做市', '高頻交易', '其他'], otherFill: true, vis: a => hasExpAns(a.q12), dis: (a, R) => ({ '高頻交易': R.hfDisabled12 }) },
 
-  { id: 'q21a', sec: 1, short: 'API 技术概念', text: '2.1.1 您是否理解以下 API 技術概念（可多選）', type: 'm', opts: ['API密钥管理', 'RESTful API', 'WebSocket', 'JSON格式', '速率限制（Rate Limiting）', '身份认证机制（如OAuth）', '以上皆理解'] },
-  { id: 'q21b', sec: 1, short: 'API 交易风险', text: '2.1.2 您是否了解 API 交易中的以下風險（可多選）', type: 'm', opts: ['系统中断风险', '网络延迟风险', '订单重复提交风险', 'API密钥泄露风险', '以上皆了解'] },
-  { id: 'q22a', sec: 1, short: '实时监控', text: '2.2.1 您是否計劃對 API 交易系統進行實時監控？', type: 's', opts: ['是，全天候监控', '是，非全天候监控', '否'] },
-  { id: 'q22b', sec: 1, short: '止损机制', text: '2.2.2 您是否設有交易止損機制？', type: 's', opts: ['是，已设置自动止损', '是，手动设置止损', '否'] },
+  { id: 'q21a', sec: 1, text: '您是否理解以下API技術概念（可多選）', type: 'm', opts: ['API密鑰管理', 'RESTful API', 'WebSocket', 'JSON格式', '速率限制（Rate Limiting）', '身份認證機制（如OAuth）', '以上皆理解'] },
+  { id: 'q21b', sec: 1, text: '您是否了解API交易中的以下風險（可多選）', type: 'm', opts: ['系統中斷風險', '網絡延遲風險', '訂單重複提交風險', 'API密鑰洩露風險', '以上皆了解'] },
+  { id: 'q22a', sec: 1, text: '您是否計劃對API交易系統進行實時監控？', type: 's', opts: ['是，全天候監控', '是，非全天候監控', '否'] },
+  { id: 'q22b', sec: 1, text: '您是否設有交易止損機制？', type: 's', opts: ['是，已設置自動止損', '是，手動設置止損', '否'] },
 
-  { id: 'q31', sec: 2, short: '投资目标', text: '3.1 您開通 API 交易的主要投資目標（可多選）', type: 'm', opts: ['长期资本增值', '短期交易获利', '套利', '做市', '资产配置', '其他'], otherFill: true },
-  { id: 'q32', sec: 2, short: '风险承受能力', text: '3.2 您的風險承受能力評級', type: 's', opts: ['保守型（不愿承担任何本金损失）', '稳健型（可接受小幅波动）', '平衡型（可接受中等波动）', '进取型（可接受较大波动）', '激进型（可接受高风险高回报）'] },
-  { id: 'q32b', sec: 2, short: '最大回撤', text: '3.2.1 您能承受的總投資組合最大回撤', type: 's', opts: ['低于5%', '5-10%', '10-20%', '20-30%', '高于30%'] },
-  { id: 'q33a', sec: 2, short: '杠杆交易', text: '3.3.1 您是否計劃通過 API 進行槓桿交易？', type: 's', opts: ['是', '否'], dis: (a, R) => ({ '是': R.q33YesDisabled }) },
-  { id: 'q33b', sec: 2, short: '衍生产品', text: '3.3.2 您是否計劃通過 API 交易衍生產品（如期權、期貨、窩輪、牛熊證等）？', type: 's', opts: ['是', '否'], dis: (a, R) => ({ '是': R.q33YesDisabled }) },
+  { id: 'q31', sec: 2, text: '您開通API交易的主要投資目標（可多選）', type: 'm', opts: ['長期資本增值', '短期交易獲利', '套利', '做市', '資產配置', '其他'], otherFill: true },
+  { id: 'q32a', sec: 2, text: '您是否計劃通過API進行槓桿交易？', type: 's', opts: ['是', '否'] },
+  { id: 'q32b', sec: 2, text: '您是否計劃通過API交易衍生產品（如期權、期貨、窩輪、牛熊證等）？', type: 's', opts: ['是', '否'] },
 
-  { id: 'q41name', sec: 3, short: '策略名称', text: '4.1.1 交易策略名稱', type: 'text', placeholder: '請為您的策略命名（僅作標識）' },
-  { id: 'q41t', sec: 3, short: '策略类型', text: '4.1.2 策略類型（可多選）', type: 'm', opts: ['趋势跟踪', '均值回归', '套利', '做市', '高频交易', '统计套利', '机器学习驱动', '其他'], otherFill: true, dis: (a, R) => ({ '做市': R.hfMmDisabled41, '高频交易': R.hfMmDisabled41 }) },
-  { id: 'q41d1', sec: 3, short: '决策依据', text: '4.1.3 決策依據 / 信號來源（可多選）', type: 'm', opts: ['技术指标', '价量数据/盘口订单簿', '基本面数据', '新闻/公告/舆情事件', '统计模型', '机器学习模型', '其他'], otherFill: true },
-  { id: 'q41d2', sec: 3, short: '持仓周期', text: '4.1.4 持倉週期', type: 's', opts: ['秒–分钟级（日内高频）', '分钟–小时级（日内波段）', '日内开平仓、不过夜', '数日–数周（短线波段）', '月度以上（中长期持有）'] },
-  { id: 'q41d3', sec: 3, short: '出入场与执行', text: '4.1.5 出入場與執行方式（可多選）', type: 'm', opts: ['信号触发自动开平仓（全自动）', '信号触发、人工确认后下单（半自动）', '固定止盈止损出场', '信号反转出场', '定时/到期强制平仓', '其他'], otherFill: true },
-  { id: 'q42', sec: 3, short: '风控机制', text: '4.2.1 您是否設有以下風控機制（可多選）', type: 'm', opts: ['自动止损', '自动止盈', '每日交易限额', '单笔交易限额', '最大持仓限制', '频率限制', '其他'], otherFill: true },
-  { id: 'q42e', sec: 3, short: '应急处理方案', text: '4.2.2 異常情況（如系統故障、市場劇烈波動）的應急處理方案（可多選）', type: 'm', opts: ['自动熔断/暂停策略', '自动止损平仓', '撤单重试', '切换人工手动交易', '告警通知人工介入', '其他'], otherFill: true },
+  { id: 'q41sig', sec: 3, text: '交易策略的決策依據/信號來源（可多選）', type: 'm', opts: ['技術指標（均線、MACD、動量等）', '價量資料', '盤口訂單簿', '基本面資料（財報、估值等）', '新聞 / 公告 / 輿情事件', '統計（價差、相關性等）', '機器學習模型', '其他'], otherFill: true },
+  { id: 'q41t', sec: 3, text: '交易策略類型（可多選）', note: '選擇「做市」或「高頻交易」的客戶，開通後將被納入重點關注', type: 'm', opts: ['趨勢跟蹤', '均值回歸', '套利', '做市', '高頻交易', '統計套利', '機器學習驅動', '其他'], otherFill: true, dis: (a, R) => ({ '做市': R.hfMmDisabled41, '高頻交易': R.hfMmDisabled41 }) },
+  { id: 'q41x', sec: 3, text: '交易策略下訂單的出入場及執行方式（可多選）', type: 'm', opts: ['信號觸發自動開平倉（全自動）', '信號觸發、人工確認後下單（半自動）', '固定止盈止損出場', '信號反轉出場', '定時/到期強制平倉', '其他'], otherFill: true },
+  { id: 'q42', sec: 3, text: '您是否設有以下風控機制（可多選）', type: 'm', opts: ['自動止損', '自動止盈', '每日交易限額', '單筆交易限額', '最大持倉限制', '頻率限制', '其他'], otherFill: true },
+  { id: 'q42e', sec: 3, text: '如發生異常情況（如系統故障、市場劇烈波動），您的應急處理方案（可多選）', type: 'm', opts: ['自動熔斷/暫停策略', '自動止損平倉', '撤單重試', '切換人工手動交易', '告警通知人工介入', '其他'], otherFill: true },
 ];
 
 function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, setOthers }) {
-  const [sheet, setSheet] = useState(null);
+  const [page, setPage] = useState(0);
   const [missed, setMissed] = useState([]);
   const [reconfirm, setReconfirm] = useState({});
   const [exitAsk, setExitAsk] = useState(false);
   const hasInput = Object.keys(a).length > 0 || Object.values(others).some(v => (v || '').trim());
+  const scrollTop = () => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; };
   const tryExit = () => { if (hasInput) { scrollTop(); setExitAsk(true); } else onClose(); };
 
   const set = (id, v) => {
@@ -1297,134 +1165,120 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, set
     setMissed(prev => prev.filter(x => x !== id));
     setReconfirm(prev => ({ ...prev, [id]: false }));
   };
-  const scrollTop = () => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; };
-  const openSheet = (q) => { scrollTop(); setSheet(q); };
-
-  // —— 联动置灰规则（MVP 硬编码）——
-  const R = {
-    lowExp: a.q11 === '无' || (a.q11a && ['无', '6个月以下', '6个月-1年'].includes(a.q11a)),
-    hfDisabled12: a.q11d && ['无', '1-10笔', '10-50笔'].includes(a.q11d),
-    q33YesDisabled: a.q32 && a.q32.startsWith('平衡型'),
+  const toggle = (id, v) => {
+    const cur = a[id] || [];
+    set(id, cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]);
   };
-  R.hfMmDisabled41 = R.lowExp || (a.q31 || []).includes('长期资本增值');
-  const riskWarn = a.q32 && (a.q32.startsWith('保守型') || a.q32.startsWith('稳健型'));
 
-  // 回改先答题 → 清除冲突答案并标记「需重新确认」
+  // —— 联动置灰规则（MVP 硬编码，8/28 缩减为 3 条）——
+  const R = {
+    lowExp: !hasExpAns(a.q11) || (a.q11a && ['6個月以下', '6個月-1年'].includes(a.q11a)), // 规则② (无经验视同不足 1 年)
+    hfDisabled12: !!(a.q11d && ['無', '1-10筆', '10-50筆'].includes(a.q11d)),                   // 规则③
+  };
+  R.hfMmDisabled41 = R.lowExp || (a.q31 || []).includes('長期資本增值');                        // 规则② + ④
+
+  // 回改先答题 → 清除冲突答案并标记「需重新確認」
   useEffect(() => {
-    if (R.hfMmDisabled41 && (a.q41t || []).some(v => v === '做市' || v === '高频交易')) {
-      setA(prev => ({ ...prev, q41t: prev.q41t.filter(v => v !== '做市' && v !== '高频交易') }));
+    if (R.hfMmDisabled41 && (a.q41t || []).some(v => v === '做市' || v === '高頻交易')) {
+      setA(prev => ({ ...prev, q41t: prev.q41t.filter(v => v !== '做市' && v !== '高頻交易') }));
       setReconfirm(prev => ({ ...prev, q41t: true }));
     }
   }, [R.hfMmDisabled41]);
   useEffect(() => {
-    if (R.hfDisabled12 && (a.q12a || []).includes('高频交易')) {
-      setA(prev => ({ ...prev, q12a: prev.q12a.filter(v => v !== '高频交易') }));
+    if (R.hfDisabled12 && a.q12a === '高頻交易') {
+      setA(prev => ({ ...prev, q12a: null }));
       setReconfirm(prev => ({ ...prev, q12a: true }));
     }
   }, [R.hfDisabled12]);
-  useEffect(() => {
-    if (R.q33YesDisabled && (a.q33a === '是' || a.q33b === '是')) {
-      setA(prev => ({ ...prev, q33a: prev.q33a === '是' ? null : prev.q33a, q33b: prev.q33b === '是' ? null : prev.q33b }));
-      setReconfirm(prev => ({ ...prev, q33a: true, q33b: true }));
-    }
-  }, [R.q33YesDisabled]);
 
   const visible = QUESTIONS.filter(q => !q.vis || q.vis(a));
-  const display = (q) => {
+  const isAnswered = (q) => {
     const v = a[q.id];
-    if (q.type === 'm') return (v && v.length) ? `已选 ${v.length} 项：${v.join('、')}` : '';
-    return v || '';
+    if (q.type === 'm') {
+      if (!v || v.length === 0) return false;
+      if (q.otherFill && v.includes('其他') && !(others[q.id] || '').trim()) return false;
+      return true;
+    }
+    if (!v) return false;
+    if (q.otherFill && v === '其他' && !(others[q.id] || '').trim()) return false;
+    return true;
   };
-
-  const submit = () => {
-    const missing = visible.filter(q => {
-      if (q.type === 'text') return !(a[q.id] || '').trim();
-      const v = a[q.id];
-      if (q.type === 'm') {
-        if (!v || v.length === 0) return true;
-        if (q.otherFill && v.includes('其他') && !(others[q.id] || '').trim()) return true;
-        return false;
-      }
-      return !v;
-    }).map(q => q.id);
-    if (missing.length) {
-      setMissed(missing);
-      showToast('还有必答题未完成');
-      const el = document.getElementById('q-' + missing[0]);
+  const locate = (ids, p) => {
+    setMissed(ids);
+    if (p !== undefined && p !== page) setPage(p);
+    showToast('还有必答题未完成');
+    setTimeout(() => {
+      const el = document.getElementById('q-' + ids[0]);
       const c = document.getElementById('phone-content');
       if (el && c) c.scrollTop = el.offsetTop - 70;
-      return;
+    }, 80);
+  };
+  const goNext = () => {
+    const missing = visible.filter(q => q.sec === page && !isAnswered(q)).map(q => q.id);
+    if (missing.length) { locate(missing); return; }
+    scrollTop();
+    setPage(page + 1);
+  };
+  const goBack = () => { scrollTop(); setPage(page - 1); };
+  const submit = () => {
+    for (let p = 0; p < QUIZ_SECTIONS.length; p++) {
+      const missing = visible.filter(q => q.sec === p && !isAnswered(q)).map(q => q.id);
+      if (missing.length) { locate(missing, p); return; }
     }
-    if (a.q32 && (a.q32.startsWith('保守型') || a.q32.startsWith('稳健型'))) { onSubmit('reject'); return; }
-    const manual = visible.some(q => q.otherFill && (a[q.id] || []).includes('其他'));
+    const manual = visible.some(q => q.otherFill && (q.type === 'm' ? (a[q.id] || []).includes('其他') : a[q.id] === '其他') && (others[q.id] || '').trim());
     onSubmit(manual ? 'manual' : 'auto');
   };
 
-  let lastSec = -1;
+  const pageQs = visible.filter(q => q.sec === page);
   return (
     <div style={{ background: TK.surfaceSoft, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
-      <LightNav title="适当性调查问卷" step={1} total={2} onBack={tryExit} onClose={tryExit} />
+      <LightNav title="适当性调查问卷" step={page + 1} total={4} onBack={page === 0 ? tryExit : goBack} onClose={tryExit} />
       <div style={{ flex: 1, padding: '16px 20px 24px' }}>
-        {visible.map(q => {
-          const secHeader = q.sec !== lastSec ? (lastSec = q.sec, (
-            <div key={'sec' + q.sec} style={{ fontSize: 16, fontWeight: 700, color: TK.ink, margin: '14px 0 16px' }}>{QUIZ_SECTIONS[q.sec]}</div>
-          )) : null;
+        <div style={{ fontSize: 16, fontWeight: 700, color: TK.ink, margin: '6px 0 4px' }}>{QUIZ_SECTIONS[page]}</div>
+        <div style={{ fontSize: 11, color: TK.mutedSoft, marginBottom: 18 }}>第 {page + 1} / 4 部分 · 每題必答，不得跳過</div>
+        {pageQs.map(q => {
           const disMap = q.dis ? q.dis(a, R) : null;
+          const err = missed.includes(q.id);
+          const otherOn = q.otherFill && (q.type === 'm' ? (a[q.id] || []).includes('其他') : a[q.id] === '其他');
           return (
-            <React.Fragment key={q.id}>
-              {secHeader}
-              <div id={'q-' + q.id} style={{ marginBottom: 22 }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink, marginBottom: 10, lineHeight: 1.5 }}>{q.text}</div>
-                {q.type === 'text' ? (
-                  <input value={a[q.id] || ''} onChange={e => set(q.id, e.target.value)} placeholder={q.placeholder}
-                    style={{
-                      width: '100%', height: 50, borderRadius: 12, padding: '0 14px', fontSize: 14, background: TK.canvas,
-                      border: `1.5px solid ${missed.includes(q.id) ? TK.down : TK.hairlineSoft}`,
-                    }} />
-                ) : (
-                  <React.Fragment>
-                    <FieldRow display={display(q)} error={missed.includes(q.id)} reconfirm={reconfirm[q.id]} onOpen={() => openSheet(q)} />
-                    {q.id === 'q32' && riskWarn && (
-                      <div style={{ background: 'rgba(207,32,47,0.06)', border: '1px solid rgba(207,32,47,0.25)', borderRadius: 10, padding: '9px 12px', fontSize: 12, color: TK.down, marginTop: 8 }}>
-                        ⚠ {FAIL_HINT}
-                      </div>
-                    )}
-                    {q.otherFill && (a[q.id] || []).includes('其他') && (
-                      <React.Fragment>
-                        <input value={others[q.id] || ''} onChange={e => { setOthers({ ...others, [q.id]: e.target.value }); setMissed(prev => prev.filter(x => x !== q.id)); }}
-                          placeholder="請補充說明（必填）"
-                          style={{
-                            width: '100%', height: 48, borderRadius: 12, padding: '0 14px', fontSize: 14, marginTop: 8, background: TK.canvas,
-                            border: `1.5px solid ${missed.includes(q.id) ? TK.down : TK.hairlineSoft}`,
-                          }} />
-                        <div style={{ fontSize: 11, color: '#b57f00', marginTop: 8, background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
-                          選擇「其他」並填寫自定義內容，申請將進入人工審核（預計 1-3 個工作日）
-                        </div>
-                      </React.Fragment>
-                    )}
-                  </React.Fragment>
-                )}
-              </div>
-            </React.Fragment>
+            <div key={q.id} id={'q-' + q.id} style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink, marginBottom: 4, lineHeight: 1.5 }}>{q.text}</div>
+              {q.note && <div style={{ fontSize: 12, color: TK.muted, marginBottom: 10, lineHeight: 1.5 }}>{q.note}</div>}
+              {!q.note && <div style={{ height: 6 }} />}
+              {reconfirm[q.id] && (
+                <div style={{ fontSize: 11, color: '#b57f00', background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '7px 12px', marginBottom: 10, lineHeight: 1.5 }}>⚠ 因先前答案變更，此題需重新確認</div>
+              )}
+              {q.opts.map(o => (
+                <Option key={o} label={o} multi={q.type === 'm'}
+                  selected={q.type === 'm' ? (a[q.id] || []).includes(o) : a[q.id] === o}
+                  disabled={!!(disMap && disMap[o])}
+                  disabledHint="選擇該選項可能導致申請失敗"
+                  onClick={() => q.type === 'm' ? toggle(q.id, o) : set(q.id, o)} />
+              ))}
+              {otherOn && (
+                <React.Fragment>
+                  <input value={others[q.id] || ''} onChange={e => { setOthers({ ...others, [q.id]: e.target.value }); setMissed(prev => prev.filter(x => x !== q.id)); }}
+                    placeholder="請補充說明（必填）"
+                    style={{ width: '100%', height: 48, borderRadius: 12, padding: '0 14px', fontSize: 14, background: TK.canvas, border: `1.5px solid ${err ? TK.down : TK.hairlineSoft}` }} />
+                  <div style={{ fontSize: 11, color: '#b57f00', marginTop: 8, background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
+                    選擇「其他」並填寫自定義內容，申請將進入人工審核（預計 1-3 個工作日）
+                  </div>
+                </React.Fragment>
+              )}
+              {err && <div style={{ fontSize: 11, color: TK.down, marginTop: 6 }}>此題為必答</div>}
+            </div>
           );
         })}
       </div>
-      <FormFooter backText="上一步" nextText="提交" onBack={tryExit} onNext={submit} />
+      <FormFooter backText="上一步" nextText={page === 3 ? '提交' : '下一步'} onBack={page === 0 ? null : goBack} onNext={page === 3 ? submit : goNext} />
       {exitAsk && (
         <ConfirmModal title="确认退出申请？" lines={['退出后已填写的问卷内容将不保留。']} confirmText="退出" onCancel={() => setExitAsk(false)} onConfirm={() => { setA({}); setOthers({}); onClose(); }} />
-      )}
-      {sheet && (
-        <SheetSelect title={sheet.short} options={sheet.opts} multi={sheet.type === 'm'}
-          selected={a[sheet.id] || (sheet.type === 'm' ? [] : null)}
-          disabledMap={sheet.dis ? sheet.dis(a, R) : null}
-          onChange={(v) => set(sheet.id, v)}
-          onClose={() => setSheet(null)} />
       )}
     </div>
   );
 }
 
-Object.assign(window, { QuizScreen });
+Object.assign(window, { QuizScreen, QUESTIONS, QUIZ_SECTIONS });
 </script>
 <script type="text/babel">
 /* ================= PhoneOverlay: 手机屏幕覆盖层 =================
@@ -1452,7 +1306,7 @@ function PhoneOverlay({ children, style }) {
 Object.assign(window, { PhoneOverlay });
 </script>
 <script type="text/babel">
-/* ================= 浅色页: 不予通过结果页（规则⑤ 提交后终态） ================= */
+/* ================= 浅色页: 不予通过结果页（人工审核驳回终态；8/28 起原规则⑤途径随风险题删除而移除，由入口评级拦截前置替代） ================= */
 function NotApprovedScreen({ onRevise, onGiveUp }) {
   return (
     <div style={{ background: TK.canvas, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -1460,10 +1314,10 @@ function NotApprovedScreen({ onRevise, onGiveUp }) {
         <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(207,32,47,0.1)', color: TK.down, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginBottom: 16 }}>✕</div>
         <div style={{ fontSize: 20, fontWeight: 600, color: TK.ink, marginBottom: 12 }}>申请未获通过</div>
         <div style={{ fontSize: 13, color: TK.body, lineHeight: 1.8, textAlign: 'center' }}>
-          根据您申报的风险承受能力（保守型 / 稳健型），API 交易服务的风险等级与您不匹配，本次申请未获通过。
+          您申報的資料未能通過本次審核，本次申請未獲通過。如有疑問請聯繫客服。
         </div>
         <div style={{ fontSize: 12, color: TK.muted, lineHeight: 1.7, textAlign: 'center', marginTop: 14, background: TK.surfaceSoft, borderRadius: 12, padding: '12px 16px' }}>
-          如您此前填写有误，可返回修改答案后重新提交；如风险状况真实发生变化，请更新风险测评后重新申请。
+          如您此前填寫有誤，可返回修改答案後重新提交；如相關情況發生變化，請更新後重新申請。
         </div>
       </div>
       <div style={{ padding: '12px 20px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
