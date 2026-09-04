@@ -9,19 +9,22 @@
   ============================================================================
   云锋有鱼 OpenAPI 管理后台 MVP · 高保真可交互 Demo
   ----------------------------------------------------------------------------
-  依据: docs/superpowers/specs/2026-08-26-openapi-admin-backend-design.md
-       （已按 APP 申请流 v2 调整：问卷 0828 版字段、Key 单生效策略）
+  依据: docs/superpowers/specs/2026-08-26-openapi-admin-backend-design-v2.md
+       （人工审核为系统内串行三级审批：交易部 → 风控部 → 合规部；
+       已按 APP 申请流 v2 调整：问卷 0828 版字段、Key 单生效策略）
   视觉: DESIGN-visual.md（Coinbase 风格机构级设计体系，antd v5 ConfigProvider
         theme token 覆盖：主色 #0052ff / pill 按钮 / hairline 分隔 / 单档阴影）
   假设 (Assumptions):
   1. 全部数据为内存 mock，刷新即重置；登录任意账号密码均可进入（demo）
-  2. Header 的「角色切换器（管理员/只读）」为 demo 便利功能，真实产品由账号
-     角色决定；只读角色下所有操作按钮不渲染
-  3. 当前登录账号名直接作为操作日志的「操作人」
+  2. Header 右上角「角色切换器」为 demo 便利功能，五类角色：交易审批人（Joe
+     Leung）/ 风控审批人（Frank Nie）/ 合规审批人（Shirley Tse）/ 操作员 / 只读；
+     真实产品角色由 BPM 账号权限体系决定。审批操作仅对应当前节点的审批角色可见；
+     服务管理写操作仅操作员可见；只读角色所有操作按钮不渲染
+  3. 示例审批人名直接作为审批留痕与操作日志的「操作人 / 审批人」
   4. APISecret 按安全约定全站不出现；APIKey 仅展示掩码
   5. 服务「已注销」客户的 Key 展示为「已失效」灰色态；服务「已暂停」时全部 Key
      展示为「已暂停」（服务级状态覆盖单 Key 状态）
-  6. 做市/高频打标数据在 mock 中直接给出，真实环境由后端在开通时触发
+  6. 高频打标数据在 mock 中直接给出，真实环境由后端在开通时触发
   7. 复制按钮在 file:// 下若剪贴板 API 不可用，退化为提示展示完整掩码
   8. 风控记录模块为只读事实数据；第一期所有规则触发后的处置结果统一为「已拒
      单」，字段预留阻断 API·暂停 Key / 系统外处置等扩展值；同一笔订单命中多条
@@ -58,6 +61,7 @@
   #root { min-height: 100vh; }
   .mono { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
   .row-clickable { cursor: pointer; }
+  .row-pending > td { background: rgba(0, 82, 255, 0.045) !important; }
   .qa-other-fill {
     background: rgba(207, 32, 47, 0.06);
     border: 1px solid rgba(207, 32, 47, 0.25);
@@ -85,7 +89,7 @@ const { useState, useMemo } = React;
 const {
   Layout, Menu, Button, Table, Tag, Select, Input, DatePicker, Radio, Modal,
   Popconfirm, Card, Descriptions, Space, Typography, ConfigProvider, Form,
-  Divider, Badge, Tooltip, Alert, Empty, Segmented, App: AntApp
+  Divider, Badge, Tooltip, Alert, Empty, Segmented, Steps, App: AntApp
 } = antd;
 const { RangePicker } = DatePicker;
 const { Text, Title, Paragraph, Link } = Typography;
@@ -120,11 +124,37 @@ const COLOR = {
 };
 
 const APPLY_STATUS = {
-  reviewing: { text: '审核中', color: 'orange' },
-  approved:  { text: '已审核', color: 'blue' },
-  rejected:  { text: '已驳回', color: 'red' },
-  opened:    { text: '已开通', color: 'green' }
+  pending_trading:    { text: '待交易部审批', color: 'orange' },
+  pending_risk:       { text: '待风控部审批', color: 'orange' },
+  pending_compliance: { text: '待合规部审批', color: 'orange' },
+  approved:           { text: '已通过', color: 'blue' },
+  rejected:           { text: '已驳回', color: 'red' },
+  opened:             { text: '已开通', color: 'green' }
 };
+
+// 系统内串行三级审批：交易部 → 风控部 → 合规部，任一环节驳回即终止流程
+const APPROVAL_FLOW = [
+  { node: 'pending_trading', dept: '交易部' },
+  { node: 'pending_risk', dept: '风控部' },
+  { node: 'pending_compliance', dept: '合规部' }
+];
+
+const NODE_TEXT = {
+  pending_trading: '待交易部审批',
+  pending_risk: '待风控部审批',
+  pending_compliance: '待合规部审批'
+};
+
+// 五类 demo 角色（真实产品由 BPM 账号权限体系决定）
+const ROLES = {
+  trading:    { label: '交易审批人', person: 'Joe Leung', dept: '交易部' },
+  risk:       { label: '风控审批人', person: 'Frank Nie', dept: '风控部' },
+  compliance: { label: '合规审批人', person: 'Shirley Tse', dept: '合规部' },
+  operator:   { label: '操作员', person: '王敏', dept: null },
+  readonly:   { label: '只读', person: null, dept: null }
+};
+
+function isPendingStatus(s) { return s.indexOf('pending') === 0; }
 
 const SERVICE_STATUS = {
   active:    { text: '已开通', color: 'green' },
@@ -251,7 +281,7 @@ const QUESTIONNAIRE_REVIEW_2 = [
   }
 ];
 
-// 已审核（人工）客户的问卷快照：4.1.1 选「其他」，经 OA 三级审核通过
+// 已通过（人工三级审批全通过）客户的问卷快照：4.1.1 选「其他」
 const QUESTIONNAIRE_MANUAL_PASSED = makeAutoQuestionnaire();
 QUESTIONNAIRE_MANUAL_PASSED[3].items[1] = {
   no: '4.1.1', q: '决策依据 / 信号来源（多选）？', a: '其他',
@@ -265,74 +295,142 @@ QUESTIONNAIRE_REJECTED[3].items[3] = {
   other: '到时候看情况处理'
 };
 
+// 待合规审批客户的问卷快照：4.1.1 选「其他」（交易部、风控部已通过）
+const QUESTIONNAIRE_REVIEW_3 = makeAutoQuestionnaire();
+QUESTIONNAIRE_REVIEW_3[3].items[1] = {
+  no: '4.1.1', q: '决策依据 / 信号来源（多选）？', a: '其他',
+  other: '基于另类数据（卫星 imagery、电商热度）的自研量化信号'
+};
+
 /* ==========================================================================
-   Mock 数据 · 申请记录（8 条，状态全覆盖）
+   Mock 数据 · 申请记录（10 条：三级审批各节点 + 驳回 + 全通过 + 自动审核）
+   approvals: [{ dept, person, result: 'approved' | 'rejected', note, time }]
+   currentNode: pending_trading / pending_risk / pending_compliance / null
    ========================================================================== */
 
 const INITIAL_APPLICATIONS = [
   {
     id: 'OA-20260825-001', yuId: '83625147', name: '陈昊然',
-    submitTime: '2026-08-25 14:32', status: 'reviewing',
+    submitTime: '2026-08-25 14:32', status: 'pending_trading',
+    currentNode: 'pending_trading',
     manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
-    operator: null, operateTime: null, conclusionNote: null,
+    approvals: [],
     questionnaire: QUESTIONNAIRE_REVIEW_1
   },
   {
-    id: 'OA-20260824-003', yuId: '82190463', name: '周雨桐',
-    submitTime: '2026-08-24 09:18', status: 'reviewing',
+    id: 'OA-20260825-002', yuId: '82190463', name: '周雨桐',
+    submitTime: '2026-08-25 11:20', status: 'pending_trading',
+    currentNode: 'pending_trading',
     manualReason: '4.2 应急方案选择「其他」',
-    operator: null, operateTime: null, conclusionNote: null,
+    approvals: [],
     questionnaire: QUESTIONNAIRE_REVIEW_2
   },
   {
-    id: 'OA-20260823-002', yuId: '80142735', name: '李铭轩',
-    submitTime: '2026-08-23 16:47', status: 'approved',
+    id: 'OA-20260825-003', yuId: '85774120', name: '林嘉怡',
+    submitTime: '2026-08-25 09:05', status: 'pending_risk',
+    currentNode: 'pending_risk',
     manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
-    operator: '王敏', operateTime: '2026-08-24 10:12',
-    conclusionNote: '决策依据 / 信号来源经交易部初审与风控部复核，信号来源可解释，可接受。',
-    questionnaire: QUESTIONNAIRE_MANUAL_PASSED
+    approvals: [
+      { dept: '交易部', person: 'Joe Leung', result: 'approved',
+        note: '信号来源可解释，与客户披露的技术能力匹配，同意进入风控部审批。',
+        time: '2026-08-25 10:12' }
+    ],
+    questionnaire: QUESTIONNAIRE_REVIEW_1
+  },
+  {
+    id: 'OA-20260824-006', yuId: '86901254', name: '赵凯文',
+    submitTime: '2026-08-24 17:48', status: 'pending_compliance',
+    currentNode: 'pending_compliance',
+    manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
+    approvals: [
+      { dept: '交易部', person: 'Joe Leung', result: 'approved',
+        note: '策略类型与交易经验相符，通过。',
+        time: '2026-08-24 18:30' },
+      { dept: '风控部', person: 'Frank Nie', result: 'approved',
+        note: '另类数据源合规性无异常，风险敞口可控，通过。',
+        time: '2026-08-25 09:15' }
+    ],
+    questionnaire: QUESTIONNAIRE_REVIEW_3
   },
   {
     id: 'OA-20260822-005', yuId: '82938741', name: '黄梓晴',
     submitTime: '2026-08-22 11:05', status: 'rejected',
+    currentNode: null,
     manualReason: '4.2 应急方案选择「其他」',
-    operator: '王敏', operateTime: '2026-08-23 15:40',
-    conclusionNote: '应急方案表述过于模糊，无法评估极端行情下的处置能力，请补充后重新申请。',
+    approvals: [
+      { dept: '交易部', person: 'Joe Leung', result: 'approved',
+        note: '交易经验与技术能力满足要求，提交风控部复核。',
+        time: '2026-08-22 14:20' },
+      { dept: '风控部', person: 'Frank Nie', result: 'rejected',
+        note: '应急方案表述过于模糊，无法评估极端行情下的处置能力，请补充后重新申请。',
+        time: '2026-08-23 15:40' }
+    ],
     questionnaire: QUESTIONNAIRE_REJECTED
+  },
+  {
+    id: 'OA-20260823-002', yuId: '80142735', name: '李铭轩',
+    submitTime: '2026-08-23 16:47', status: 'approved',
+    currentNode: null,
+    manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
+    approvals: [
+      { dept: '交易部', person: 'Joe Leung', result: 'approved',
+        note: '信号来源可解释，通过。',
+        time: '2026-08-23 18:02' },
+      { dept: '风控部', person: 'Frank Nie', result: 'approved',
+        note: '多因子信号风险可控，通过。',
+        time: '2026-08-24 09:40' },
+      { dept: '合规部', person: 'Shirley Tse', result: 'approved',
+        note: '同意通过，系统自动通知交易部、风控部、合规部。',
+        time: '2026-08-24 10:12' }
+    ],
+    questionnaire: QUESTIONNAIRE_MANUAL_PASSED
   },
   {
     id: 'OA-20260820-001', yuId: '81056238', name: '吴子豪',
     submitTime: '2026-08-20 10:02', status: 'opened',
+    currentNode: null,
     manualReason: '—（自动审核通过）',
-    operator: '系统', operateTime: '2026-08-20 10:02', conclusionNote: null,
+    approvals: [],
     questionnaire: makeAutoQuestionnaire()
   },
   {
     id: 'OA-20260819-004', yuId: '82074196', name: '郑晓琳',
     submitTime: '2026-08-19 15:26', status: 'opened',
+    currentNode: null,
     manualReason: '4.1.1 决策依据 / 信号来源选择「其他」',
-    operator: '王敏', operateTime: '2026-08-20 09:31',
-    conclusionNote: '做市策略经风控部审核通过，已同步打标「做市/高频」并通知交易部、风险部、合规部。',
+    approvals: [
+      { dept: '交易部', person: 'Joe Leung', result: 'approved',
+        note: '高频策略与客户经验匹配，通过。',
+        time: '2026-08-19 17:10' },
+      { dept: '风控部', person: 'Frank Nie', result: 'approved',
+        note: '高频交易风险已评估，通过并打标「高频」。',
+        time: '2026-08-19 19:25' },
+      { dept: '合规部', person: 'Shirley Tse', result: 'approved',
+        note: '同意通过，系统已自动通知交易部、风控部、合规部。',
+        time: '2026-08-20 09:31' }
+    ],
     questionnaire: QUESTIONNAIRE_MANUAL_PASSED
   },
   {
     id: 'OA-20260818-002', yuId: '84531876', name: '刘俊杰',
     submitTime: '2026-08-18 13:55', status: 'opened',
+    currentNode: null,
     manualReason: '—（自动审核通过）',
-    operator: '系统', operateTime: '2026-08-18 13:55', conclusionNote: null,
+    approvals: [],
     questionnaire: makeAutoQuestionnaire()
   },
   {
     id: 'OA-20260817-001', yuId: '80965427', name: '孙梦瑶',
     submitTime: '2026-08-17 09:40', status: 'opened',
+    currentNode: null,
     manualReason: '—（自动审核通过）',
-    operator: '系统', operateTime: '2026-08-17 09:40', conclusionNote: null,
+    approvals: [],
     questionnaire: makeAutoQuestionnaire()
   }
 ];
 
 /* ==========================================================================
-   Mock 数据 · 服务客户（4 个，覆盖 已开通 / 已暂停 / 已注销 + 做市高频打标）
+   Mock 数据 · 服务客户（4 个，覆盖 已开通 / 已暂停 / 已注销 + 高频打标）
    ========================================================================== */
 
 const INITIAL_CUSTOMERS = [
@@ -357,14 +455,14 @@ const INITIAL_CUSTOMERS = [
     hft: true, agreementVersion: 'v1.0',
     ticket: { valid: true, expireTime: '2026-08-29 14:18' },
     keys: [
-      { id: 'K3', name: '做市-港股-A', apiKey: maskKey('a41c', '5f7e'), ips: ['45.125.34.102', '45.125.34.103', '210.6.128.55'], createTime: '2026-08-20 14:18', status: 'effective' },
-      { id: 'K4', name: '做市-港股-B', apiKey: maskKey('b902', '18aa'), ips: ['45.125.34.102'], createTime: '2026-08-20 14:25', status: 'paused' },
+      { id: 'K3', name: '高频-港股-A', apiKey: maskKey('a41c', '5f7e'), ips: ['45.125.34.102', '45.125.34.103', '210.6.128.55'], createTime: '2026-08-20 14:18', status: 'effective' },
+      { id: 'K4', name: '高频-港股-B', apiKey: maskKey('b902', '18aa'), ips: ['45.125.34.102'], createTime: '2026-08-20 14:25', status: 'paused' },
       { id: 'K5', name: '备用观察', apiKey: maskKey('c3d7', '66b0'), ips: ['210.6.128.55'], createTime: '2026-08-22 10:40', status: 'inactive' }
     ],
     logs: [
       { operator: '系统', time: '2026-08-20 14:18', action: '开通服务', target: '服务', result: '成功' },
-      { operator: '系统', time: '2026-08-20 14:18', action: '做市/高频打标并通知', target: '交易部 / 风险部 / 合规部', result: '成功' },
-      { operator: '王敏', time: '2026-08-22 09:15', action: '暂停 Key', target: '做市-港股-B', result: '成功' }
+      { operator: '系统', time: '2026-08-20 14:18', action: '高频打标并通知', target: '交易部 / 风控部 / 合规部', result: '成功' },
+      { operator: '王敏', time: '2026-08-22 09:15', action: '暂停 Key', target: '高频-港股-B', result: '成功' }
     ]
   },
   {
@@ -480,7 +578,7 @@ const themeConfig = {
 
 function ApplyStatusTag({ status }) {
   const meta = APPLY_STATUS[status] || { text: status, color: 'default' };
-  const strong = status === 'reviewing';
+  const strong = isPendingStatus(status);
   return (
     <Tag color={meta.color} style={strong ? { fontWeight: 600, padding: '2px 12px' } : undefined}>
       {meta.text}
@@ -502,7 +600,7 @@ function KeyStatusTag({ keyStatus, serviceStatus }) {
 }
 
 function HftTag() {
-  return <Tag color="volcano" style={{ fontWeight: 600 }}>做市/高频</Tag>;
+  return <Tag color="volcano" style={{ fontWeight: 600 }}>高频</Tag>;
 }
 
 function SectionCard({ title, extra, children, style }) {
@@ -561,7 +659,9 @@ function LoginPage({ onLogin }) {
         </Space>
         <div style={{ marginTop: 24, fontSize: 12, color: COLOR.muted, textAlign: 'center', lineHeight: 1.6 }}>
           Demo 环境：任意账号密码均可登录<br />
-          登录后可在右上角切换「管理员 / 只读」角色体验权限差异
+          登录后可在右上角切换五类角色体验权限差异：<br />
+          交易审批人 / 风控审批人 / 合规审批人 / 操作员 / 只读<br />
+          人工审核为系统内串行三级审批（交易部 → 风控部 → 合规部）
         </div>
       </div>
     </div>
@@ -574,13 +674,18 @@ function LoginPage({ onLogin }) {
 
 function ApplyListPage({ applications, onOpenDetail }) {
   const [status, setStatus] = useState('all');
+  const [node, setNode] = useState('all');
   const [yuId, setYuId] = useState('');
   const [range, setRange] = useState(null);
 
   const filtered = useMemo(() => {
     return applications
       .filter(app => {
-        if (status !== 'all' && app.status !== status) return false;
+        if (status !== 'all') {
+          if (status === 'pending') { if (app.currentNode === null) return false; }
+          else if (app.status !== status) return false;
+        }
+        if (node !== 'all' && app.currentNode !== node) return false;
         if (yuId && !app.yuId.includes(yuId.trim())) return false;
         if (range && range[0] && range[1]) {
           const t = dayjs(app.submitTime).valueOf();
@@ -589,24 +694,41 @@ function ApplyListPage({ applications, onOpenDetail }) {
         return true;
       })
       .sort((a, b) => (a.submitTime < b.submitTime ? 1 : -1));
-  }, [applications, status, yuId, range]);
+  }, [applications, status, node, yuId, range]);
 
   const columns = [
     { title: '有鱼ID', dataIndex: 'yuId', width: 120, render: v => <span className="mono">{v}</span> },
     { title: '姓名', dataIndex: 'name', width: 100 },
     { title: '申请时间', dataIndex: 'submitTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
-    { title: '当前状态', dataIndex: 'status', width: 110, render: v => <ApplyStatusTag status={v} /> },
+    { title: '当前状态', dataIndex: 'status', width: 130, render: v => <ApplyStatusTag status={v} /> },
+    { title: '当前审批节点', width: 130, render: (_, r) => (
+        r.currentNode
+          ? <Tag color="orange" style={{ fontWeight: 600 }}>{NODE_TEXT[r.currentNode]}</Tag>
+          : <Text style={{ color: COLOR.muted }}>—</Text>
+      )
+    },
     { title: '触发人工原因', dataIndex: 'manualReason', render: (v, r) => (
-        r.status === 'reviewing'
+        r.currentNode
           ? <Text style={{ color: COLOR.warn }}>{v}</Text>
           : <Text style={{ color: COLOR.body }}>{v}</Text>
       )
     },
-    { title: '录入人 / 时间', width: 180, render: (_, r) => (
-        r.operator
-          ? <span>{r.operator} <span className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{r.operateTime}</span></span>
-          : <Text style={{ color: COLOR.muted }}>—</Text>
-      )
+    { title: '最近一级审批', width: 200, render: (_, r) => {
+        const last = r.approvals && r.approvals.length ? r.approvals[r.approvals.length - 1] : null;
+        if (last) {
+          return (
+            <span>
+              {last.person}（{last.dept}）
+              <Tag color={last.result === 'approved' ? 'green' : 'red'} style={{ marginLeft: 4 }}>{last.result === 'approved' ? '通过' : '驳回'}</Tag>
+              <div className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{last.time}</div>
+            </span>
+          );
+        }
+        if (r.currentNode === null && (!r.approvals || r.approvals.length === 0)) {
+          return <Text style={{ color: COLOR.muted }}>—（自动审核）</Text>;
+        }
+        return <Text style={{ color: COLOR.muted }}>—</Text>;
+      }
     },
     { title: '操作', width: 80, align: 'center', render: (_, r) => (
         <Button type="link" size="small" onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>详情</Button>
@@ -623,10 +745,21 @@ function ApplyListPage({ applications, onOpenDetail }) {
           style={{ width: 140 }}
           options={[
             { value: 'all', label: '全部状态' },
-            { value: 'reviewing', label: '审核中' },
-            { value: 'approved', label: '已审核' },
+            { value: 'pending', label: '审批中' },
+            { value: 'approved', label: '已通过' },
             { value: 'rejected', label: '已驳回' },
             { value: 'opened', label: '已开通' }
+          ]}
+        />
+        <Select
+          value={node}
+          onChange={setNode}
+          style={{ width: 170 }}
+          options={[
+            { value: 'all', label: '全部审批节点' },
+            { value: 'pending_trading', label: '待交易部审批' },
+            { value: 'pending_risk', label: '待风控部审批' },
+            { value: 'pending_compliance', label: '待合规部审批' }
           ]}
         />
         <Input.Search
@@ -643,7 +776,10 @@ function ApplyListPage({ applications, onOpenDetail }) {
         columns={columns}
         dataSource={filtered}
         pagination={{ pageSize: 10, hideOnSinglePage: true }}
-        onRow={record => ({ className: 'row-clickable', onClick: () => onOpenDetail(record.id) })}
+        onRow={record => ({
+          className: 'row-clickable' + (record.currentNode ? ' row-pending' : ''),
+          onClick: () => onOpenDetail(record.id)
+        })}
         locale={{ emptyText: <Empty description="暂无符合条件的申请" /> }}
       />
     </SectionCard>
@@ -683,83 +819,151 @@ function QuestionnaireSnapshot({ data }) {
   );
 }
 
-function AuditEntryCard({ app, role, operator, onSubmitConclusion }) {
+function ApprovalSection({ app, role, operator, onSubmitApproval }) {
   const { message, modal } = AntApp.useApp();
-  const [conclusion, setConclusion] = useState(null);
-  const [reason, setReason] = useState('');
+  const [result, setResult] = useState(null);
+  const [note, setNote] = useState('');
 
-  if (app.status !== 'reviewing') {
-    // 已录入结论的申请：只读展示审核结论
-    if (!app.operator) return null;
+  // 自动审核通过的申请：不经后台人工审批，无审批留痕
+  if (app.currentNode === null && (!app.approvals || app.approvals.length === 0)) {
     return (
-      <SectionCard title="审核结论">
-        <Descriptions column={1} size="small" bordered={false}>
-          <Descriptions.Item label="结论">
-            <ApplyStatusTag status={app.status === 'opened' ? 'opened' : app.status} />
-            <Text style={{ marginLeft: 8, color: COLOR.muted, fontSize: 13 }}>
-              {app.status === 'opened' ? '（客户已完成开通流程）' : ''}
-            </Text>
-          </Descriptions.Item>
-          <Descriptions.Item label="录入人 / 时间">{app.operator} <span className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{app.operateTime}</span></Descriptions.Item>
-          {app.conclusionNote && <Descriptions.Item label="理由 / 备注">{app.conclusionNote}</Descriptions.Item>}
-        </Descriptions>
+      <SectionCard title="三级审批">
+        <Alert type="info" showIcon message="该申请由系统自动审核通过，未走人工审批。" />
       </SectionCard>
     );
   }
 
-  if (role !== 'admin') {
-    return (
-      <SectionCard title="审核结论录入">
-        <Text style={{ color: COLOR.muted }}>当前为只读角色，仅可查看，不能录入审核结论。</Text>
-      </SectionCard>
-    );
+  const currentIdx = APPROVAL_FLOW.findIndex(f => f.node === app.currentNode);
+  let stepsCurrent = currentIdx;
+  let stepsStatus = 'process';
+  if (app.status === 'rejected') {
+    stepsCurrent = Math.max(app.approvals.length - 1, 0);
+    stepsStatus = 'error';
+  } else if (app.status === 'approved' || app.status === 'opened') {
+    stepsCurrent = APPROVAL_FLOW.length;
+    stepsStatus = 'finish';
   }
 
-  const needReason = conclusion === 'rejected';
-  const canSubmit = !!conclusion && (!needReason || reason.trim().length > 0);
+  const currentDept = app.currentNode
+    ? APPROVAL_FLOW.find(f => f.node === app.currentNode).dept
+    : null;
+  const roleMeta = ROLES[role] || {};
+  const canApprove = !!currentDept && roleMeta.dept === currentDept;
+
+  const stepItems = APPROVAL_FLOW.map((f, i) => {
+    const ap = (app.approvals || []).find(a => a.dept === f.dept);
+    return {
+      title: f.dept,
+      description: ap
+        ? (ap.result === 'approved' ? '通过' : '驳回') + ' · ' + ap.person
+        : (i === currentIdx ? '待审批' : '未到该节点')
+    };
+  });
+
+  const needNote = result === 'rejected';
+  const canSubmit = !!result && (!needNote || note.trim().length > 0);
 
   const doSubmit = () => {
     if (!canSubmit) return;
-    const approved = conclusion === 'approved';
+    const approved = result === 'approved';
+    const isFinal = approved && app.currentNode === 'pending_compliance';
+    const nextDept = app.currentNode === 'pending_trading' ? '风控部' : '合规部';
     modal.confirm({
-      title: '审核结论二次确认',
+      title: '审批提交二次确认',
       icon: React.createElement(ExclamationCircleFilled, { style: { color: approved ? COLOR.primary : COLOR.down } }),
       content: approved
-        ? '确认将该申请审核结论录入为「通过」？提交后客户将收到 APP 推送与站内信，从协议签署步骤继续申请流程（问卷无需重填）。'
-        : '确认将该申请审核结论录入为「驳回」？提交后 APP 端将向客户展示驳回理由，客户可重新申请。',
+        ? (isFinal
+            ? '确认「通过」？合规部为最后一级审批，提交后该申请即审核通过：系统将自动通知交易部、风控部、合规部三个部门；客户将收到 APP 推送与站内信，从协议签署步骤继续申请流程（问卷无需重填）。'
+            : '确认「通过」？提交后申请将流转至下一级审批（' + nextDept + '）。')
+        : '确认「驳回」？驳回后流程即终止，客户可在 APP 端修改问卷答案后重新提交申请（生成新申请记录并重新进入三级审批，本记录连同审批留痕归档）。',
       okText: '确认提交',
       cancelText: '再想想',
       onOk: () => {
-        onSubmitConclusion(app.id, approved ? 'approved' : 'rejected', reason.trim(), operator);
-        message.success('审核结论已录入，操作日志已留存');
+        onSubmitApproval(app.id, approved ? 'approved' : 'rejected', note.trim(), operator, currentDept);
+        if (!approved) message.success('已驳回，流程终止');
+        else if (isFinal) message.success('审批通过，已自动通知交易部、风控部、合规部');
+        else message.success('已通过，申请流转至' + nextDept + '审批');
       }
     });
   };
 
   return (
-    <SectionCard title="审核结论录入" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>人工审核走系统外 OA（交易部初审 → 风控部审核 → 合规部复核），此处仅录入最终结论</Text>}>
-      <div style={{ marginBottom: 16 }}>
-        <Radio.Group value={conclusion} onChange={e => setConclusion(e.target.value)}>
-          <Radio.Button value="approved">通过</Radio.Button>
-          <Radio.Button value="rejected">驳回</Radio.Button>
-        </Radio.Group>
+    <SectionCard
+      title="三级审批"
+      extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>三级串行审批：交易部 → 风控部 → 合规部，任一环节驳回即终止流程</Text>}
+    >
+      <Steps current={stepsCurrent} status={stepsStatus} items={stepItems} />
+
+      <div style={{ marginTop: 24 }}>
+        <Text strong style={{ fontSize: 14 }}>审批留痕</Text>
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {APPROVAL_FLOW.map(f => {
+            const ap = (app.approvals || []).find(a => a.dept === f.dept);
+            return (
+              <div
+                key={f.node}
+                style={{
+                  display: 'flex', gap: 16, padding: '12px 16px',
+                  border: '1px solid ' + COLOR.hairlineSoft,
+                  borderRadius: 12,
+                  background: ap ? COLOR.canvas : COLOR.surfaceSoft
+                }}
+              >
+                <div style={{ width: 72, fontWeight: 600, color: ap ? COLOR.ink : COLOR.muted, flexShrink: 0 }}>{f.dept}</div>
+                <div style={{ flex: 1 }}>
+                  {ap ? (
+                    <Space size={8} wrap>
+                      <Text strong>{ap.person}</Text>
+                      <Tag color={ap.result === 'approved' ? 'green' : 'red'}>{ap.result === 'approved' ? '通过' : '驳回'}</Tag>
+                      <span className="mono" style={{ color: COLOR.muted, fontSize: 12 }}>{ap.time}</span>
+                    </Space>
+                  ) : (
+                    <Text style={{ color: COLOR.muted }}>待审批</Text>
+                  )}
+                  {ap && ap.note && (
+                    <div style={{ marginTop: 6, color: COLOR.body, fontSize: 13 }}>审批意见：{ap.note}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
-      <Input.TextArea
-        rows={3}
-        placeholder={needReason ? '驳回理由（必填，将在 APP 端向客户展示）' : '理由 / 备注（通过时选填）'}
-        value={reason}
-        onChange={e => setReason(e.target.value)}
-        style={{ borderRadius: 12, marginBottom: 16 }}
-      />
-      <Space>
-        <Button type="primary" disabled={!canSubmit} onClick={doSubmit}>提交结论</Button>
-        {needReason && !reason.trim() && <Text style={{ color: COLOR.down, fontSize: 13 }}>驳回时理由必填</Text>}
-      </Space>
+
+      {app.currentNode && (canApprove ? (
+        <div style={{ marginTop: 24, padding: '16px 20px', border: '1px solid ' + COLOR.hairline, borderRadius: 12 }}>
+          <Text strong style={{ fontSize: 14 }}>本级审批操作（{currentDept} · {operator}）</Text>
+          <div style={{ margin: '12px 0' }}>
+            <Radio.Group value={result} onChange={e => setResult(e.target.value)}>
+              <Radio.Button value="approved">通过</Radio.Button>
+              <Radio.Button value="rejected">驳回</Radio.Button>
+            </Radio.Group>
+          </div>
+          <Input.TextArea
+            rows={3}
+            placeholder={needNote ? '驳回意见（必填，将在 APP 端向客户展示）' : '审批意见（通过时选填）'}
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            style={{ borderRadius: 12 }}
+          />
+          <Space style={{ marginTop: 12 }}>
+            <Button type="primary" disabled={!canSubmit} onClick={doSubmit}>提交审批</Button>
+            {needNote && !note.trim() && <Text style={{ color: COLOR.down, fontSize: 13 }}>驳回时意见必填</Text>}
+          </Space>
+        </div>
+      ) : (
+        <Alert
+          style={{ marginTop: 24, borderRadius: 12 }}
+          type="info"
+          showIcon
+          message={'当前审批节点为「' + NODE_TEXT[app.currentNode] + '」，您以「' + (roleMeta.label || '未知') + '」登录，仅可查看审批留痕，不能执行本级审批操作。'}
+        />
+      ))}
     </SectionCard>
   );
 }
 
-function ApplyDetailPage({ app, role, operator, onBack, onSubmitConclusion }) {
+function ApplyDetailPage({ app, role, operator, onBack, onSubmitApproval }) {
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
@@ -776,14 +980,21 @@ function ApplyDetailPage({ app, role, operator, onBack, onSubmitConclusion }) {
       </SectionCard>
 
       <SectionCard title="申请状态">
-        <ApplyStatusTag status={app.status} />
+        <Space size={16} wrap>
+          <ApplyStatusTag status={app.status} />
+          {app.currentNode
+            ? <Text style={{ color: COLOR.body }}>当前审批节点：{NODE_TEXT[app.currentNode]}</Text>
+            : ((app.approvals && app.approvals.length > 0)
+                ? <Text style={{ color: COLOR.muted }}>人工三级审批已完结</Text>
+                : <Text style={{ color: COLOR.muted }}>自动审核通过，未走人工审批</Text>)}
+        </Space>
       </SectionCard>
 
       <SectionCard title="问卷答案快照" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>提交时点快照，不可变；标红题目为选择「其他」的审核靶心</Text>}>
         <QuestionnaireSnapshot data={app.questionnaire} />
       </SectionCard>
 
-      <AuditEntryCard app={app} role={role} operator={operator} onSubmitConclusion={onSubmitConclusion} />
+      <ApprovalSection app={app} role={role} operator={operator} onSubmitApproval={onSubmitApproval} />
     </div>
   );
 }
@@ -810,7 +1021,7 @@ function ServiceListPage({ customers, onOpenDetail }) {
     { title: '开通时间', dataIndex: 'openTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
     { title: '服务状态', dataIndex: 'serviceStatus', width: 110, render: v => <ServiceStatusTag status={v} /> },
     { title: 'Key 数量', width: 90, render: (_, r) => <span className="mono">{r.keys.length}</span> },
-    { title: '做市/高频标记', width: 140, render: (_, r) => r.hft ? <HftTag /> : <Text style={{ color: COLOR.muted }}>—</Text> },
+    { title: '高频标记', width: 140, render: (_, r) => r.hft ? <HftTag /> : <Text style={{ color: COLOR.muted }}>—</Text> },
     { title: '操作', width: 80, align: 'center', render: (_, r) => (
         <Button type="link" size="small" onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>详情</Button>
       )
@@ -940,7 +1151,7 @@ function ServiceDetailPage({ customer, role, operator, riskRecords, onBack, onOp
     },
     { title: '创建时间', dataIndex: 'createTime', width: 160, render: v => <span className="mono" style={{ color: COLOR.body }}>{v}</span> },
     { title: '状态', width: 90, render: (_, r) => <KeyStatusTag keyStatus={r.status} serviceStatus={customer.serviceStatus} /> },
-    ...(role === 'admin' && customer.serviceStatus === 'active' ? [{
+    ...(role === 'operator' && customer.serviceStatus === 'active' ? [{
       title: '操作', width: 110, render: (_, r) => (
         r.status === 'paused' ? (
           <Popconfirm
@@ -1009,8 +1220,8 @@ function ServiceDetailPage({ customer, role, operator, riskRecords, onBack, onOp
               ? <span className="mono" style={{ color: COLOR.body }}>{customer.cancelTime}</span>
               : <Text style={{ color: COLOR.muted }}>—</Text>}
           </Descriptions.Item>
-          <Descriptions.Item label="做市/高频标记">{customer.hft ? <HftTag /> : <Text style={{ color: COLOR.muted }}>未命中</Text>}</Descriptions.Item>
-          <Descriptions.Item label="已签协议版本号"><span className="mono">{customer.agreementVersion}</span>（交易适当性补充协议 + API 交易风险披露声明）</Descriptions.Item>
+          <Descriptions.Item label="高频标记">{customer.hft ? <HftTag /> : <Text style={{ color: COLOR.muted }}>未命中</Text>}</Descriptions.Item>
+          <Descriptions.Item label="已签协议版本号"><span className="mono">{customer.agreementVersion}</span>（API 代碼授權協議 + API 平台免責聲明 + API 交易风险披露声明）</Descriptions.Item>
         </Descriptions>
       </SectionCard>
 
@@ -1049,8 +1260,8 @@ function ServiceDetailPage({ customer, role, operator, riskRecords, onBack, onOp
         />
       </SectionCard>
 
-      {role === 'admin' && (
-        <SectionCard title="操作区" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>全部操作仅弹窗二次确认，均落操作日志</Text>}>
+      {role === 'operator' && (
+        <SectionCard title="操作区" extra={<Text style={{ color: COLOR.muted, fontSize: 12 }}>仅操作员角色可见；全部操作仅弹窗二次确认，均落操作日志</Text>}>
           <Space size={12} wrap>
             {customer.serviceStatus === 'active' && (
               <Button icon={React.createElement(StopOutlined)} onClick={confirmTerminate}>一键终止服务</Button>
@@ -1228,14 +1439,15 @@ function Shell({ user, role, onRoleChange, onLogout, route, onNavigate, children
         <Layout.Header style={{ height: 64, padding: '0 24px', borderBottom: '1px solid ' + COLOR.hairline, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ fontSize: 15, fontWeight: 600, color: COLOR.ink }}>{pageTitle}</Text>
           <Space size={16}>
-            <Tooltip title="Demo 便利功能：真实产品角色由账号决定">
-              <Segmented
+            <Tooltip title="Demo 便利功能：真实产品角色由 BPM 账号权限体系决定">
+              <Select
                 value={role}
                 onChange={onRoleChange}
-                options={[
-                  { value: 'admin', label: '管理员' },
-                  { value: 'readonly', label: '只读' }
-                ]}
+                style={{ width: 220 }}
+                options={Object.keys(ROLES).map(k => ({
+                  value: k,
+                  label: ROLES[k].person ? ROLES[k].label + ' · ' + ROLES[k].person : ROLES[k].label
+                }))}
               />
             </Tooltip>
             <Space size={6}>
@@ -1261,7 +1473,7 @@ function Shell({ user, role, onRoleChange, onLogout, route, onNavigate, children
 
 function Root() {
   const [user, setUser] = useState(null);
-  const [role, setRole] = useState('admin');
+  const [role, setRole] = useState('trading');
   const [route, setRoute] = useState({ page: 'apply-list' });
   const [applications, setApplications] = useState(INITIAL_APPLICATIONS);
   const [customers, setCustomers] = useState(INITIAL_CUSTOMERS);
@@ -1275,13 +1487,23 @@ function Root() {
     );
   }
 
-  const operator = user.account;
+  const operator = (ROLES[role] && ROLES[role].person) || user.account;
 
-  const handleSubmitConclusion = (appId, conclusion, note, op) => {
-    setApplications(prev => prev.map(a => a.id === appId
-      ? { ...a, status: conclusion, operator: op, operateTime: nowText(), conclusionNote: note || null }
-      : a
-    ));
+  const handleSubmitApproval = (appId, result, note, person, dept) => {
+    setApplications(prev => prev.map(a => {
+      if (a.id !== appId) return a;
+      const approvals = [...(a.approvals || []), { dept, person, result, note: note || null, time: nowText() }];
+      if (result === 'rejected') {
+        return { ...a, approvals, status: 'rejected', currentNode: null };
+      }
+      if (a.currentNode === 'pending_trading') {
+        return { ...a, approvals, status: 'pending_risk', currentNode: 'pending_risk' };
+      }
+      if (a.currentNode === 'pending_risk') {
+        return { ...a, approvals, status: 'pending_compliance', currentNode: 'pending_compliance' };
+      }
+      return { ...a, approvals, status: 'approved', currentNode: null };
+    }));
   };
 
   const handleKeyToggle = (customerId, keyId, nextStatus) => {
@@ -1335,7 +1557,7 @@ function Root() {
         role={role}
         operator={operator}
         onBack={() => setRoute({ page: 'apply-list' })}
-        onSubmitConclusion={handleSubmitConclusion}
+        onSubmitApproval={handleSubmitApproval}
       />
     );
   } else if (route.page === 'service-list') {
@@ -1364,7 +1586,7 @@ function Root() {
       user={user}
       role={role}
       onRoleChange={setRole}
-      onLogout={() => { setUser(null); setRole('admin'); }}
+      onLogout={() => { setUser(null); setRole('trading'); }}
       route={route}
       onNavigate={setRoute}
     >

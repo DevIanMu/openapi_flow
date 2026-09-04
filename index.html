@@ -3,22 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>云锋有鱼 · OpenAPI 申请与管理 Flow Demo v2</title>
+<title>云锋有鱼 · OpenAPI 申请与管理 Flow Demo v3</title>
 
 <!--
   ============================================================================
-  云锋有鱼 OpenAPI 申请与管理 · 高保真可交互 Flow Demo v2
+  云锋有鱼 OpenAPI 申请与管理 · 高保真可交互 Flow Demo v3
   ----------------------------------------------------------------------------
-  依据: docs/superpowers/specs/2026-08-28-app-openapi-apply-design-v2.md
-        (基于 2026-08-24 版副本调整)
+  依据: docs/superpowers/specs/2026-08-28-app-openapi-apply-design-v3.md
+        (基于 2026-08-28 v2 版副本调整, v2 归档于 FlowDemo-v2.html)
   视觉: DESIGN-visual.md (Coinbase 风格, 主色 #0052ff)
        + APP 实际形态 (background/screenshot/):
          主界面深色 (全部服务/我的) · 表单流程浅色 (开户页面)
   v2 变更 (2026-08-28):
   1. 问卷接入 20260828 版 (删除风险承受能力相关题目, 4.1/4.2 结构化坐实)
   2. 问卷按 4 个章节分页填写 (分段进度条 + 上一步/下一步 + 按页必答校验)
-  3. 选项题下平铺 (废弃半屏选择器), 置灰选项原位旁注统一提示
+  3. 选项题下平铺 (废弃半屏选择器)
   4. 风险承受能力改为介绍页入口拦截 (仅进取型/激进型可申请, 引导更新风险测评)
+  v3 变更 (2026-09-01):
+  1. 签署文件由 2 份变更为 3 份 (《API代碼授權協議》+《API平台免責聲明》
+     替代原《交易适当性补充协议》, 连同《API交易風險披露聲明》共 3 份)
+  2. 移除问卷联动置灰与「选择该选项可能导致申请失败」统一提示 (1.1 渐进展示保留);
+     答案触发逻辑矛盾规则 (②③④) 提交后直接进入不予通过结果页 (不再退回更新)
+  3. 不予通过结果页: 去掉「放弃申请」按钮, CTA 改为「重新申请」(保留已填答案返回问卷);
+     审核中「模拟驳回」同样进入不予通过结果页
   假设 (Assumptions):
   1. 深色页 = 原生 (入口/介绍/管理), 浅色页 = 申请流表单 (对齐开户页面结构:
      分段进度条 + 底部双按钮); 问卷/协议 H5 内容用繁中, 原生 chrome 用简体
@@ -83,7 +90,6 @@ const TK = {
   mono: "'JetBrains Mono', monospace",
 };
 
-const FAIL_HINT = '选择该选项可能导致申请失败'; // 统一提示文案 (8/25 定稿)
 
 /* ================= iOS 设备框 (skill 标准组件, 勿改) ================= */
 const iosFrameStyles = {
@@ -212,7 +218,7 @@ function CheckItem({ checked, onToggle, label, sub }) {
   );
 }
 
-// 单选/多选选项卡片 (浅色表单用, 题下平铺); 置灰选项原位展示 + 旁注统一提示
+// 单选/多选选项卡片 (浅色表单用, 题下平铺); v3 起无置灰态
 function Option({ label, selected, disabled, onClick, multi, disabledHint }) {
   return (
     <button onClick={disabled ? undefined : onClick} style={{
@@ -236,7 +242,7 @@ function Option({ label, selected, disabled, onClick, multi, disabledHint }) {
   );
 }
 
-Object.assign(window, { TK, FAIL_HINT, IosFrame, Toast, DarkNav, LightNav, FormFooter, CheckItem, Option });
+Object.assign(window, { TK, IosFrame, Toast, DarkNav, LightNav, FormFooter, CheckItem, Option });
 </script>
 
 <script type="text/babel">
@@ -374,7 +380,7 @@ const GATE_BLOCKS = {
   risk: { title: '暫不滿足申請條件', text: 'API 交易服務僅面向風險承受能力為進取型或激進型的客戶。您當前的風險測評結果暫不滿足申請條件。' },
   whitelist: { title: '暂未开放申请', text: '当前为灰度体验期，您暂不在体验名单内，开放后将第一时间通知。' },
 };
-function IntroScreen({ onBack, onApply, rejected, gate, onOpenAccount, onDoRisk, onUpdateRisk }) {
+function IntroScreen({ onBack, onApply, gate, onOpenAccount, onDoRisk, onUpdateRisk }) {
   const cta = gate === 'unopened' ? { text: '去完成开户', action: onOpenAccount }
     : gate === 'needrisk' ? { text: '去做风险测评', action: onDoRisk }
     : gate === 'risk' ? { text: '去更新风险测评', action: onUpdateRisk }
@@ -383,12 +389,6 @@ function IntroScreen({ onBack, onApply, rejected, gate, onOpenAccount, onDoRisk,
     <div style={{ background: TK.dark, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <DarkNav title="API 交易" onBack={onBack} />
       <div style={{ flex: 1, padding: '8px 20px 120px' }}>
-        {rejected && (
-          <div style={{ background: 'rgba(207,32,47,0.12)', border: '1px solid rgba(207,32,47,0.35)', borderRadius: 12, padding: '12px 14px', marginBottom: 16 }}>
-            <div style={{ color: '#ff6b75', fontSize: 13, fontWeight: 600, marginBottom: 2 }}>申请未获通过</div>
-            <div style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.5 }}>您提交的申请资料未能通过审核。如有疑问请联系客服。</div>
-          </div>
-        )}
         <div style={{ fontSize: 26, fontWeight: 400, color: '#fff', lineHeight: 1.25, letterSpacing: -0.5, margin: '14px 0 10px' }}>
           用你的程序<br/>直连云锋交易
         </div>
@@ -409,7 +409,7 @@ function IntroScreen({ onBack, onApply, rejected, gate, onOpenAccount, onDoRisk,
 
         <div style={{ background: TK.darkCard, borderRadius: 14, padding: '14px 16px', marginBottom: 10, marginTop: 4 }}>
           <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>开通前请知悉</div>
-          {['需已完成云锋有鱼账户开户', '需完成风险承受能力测评，且评级为进取型或激进型', '当前为灰度体验期，仅白名单用户可申请', '需完成适当性调查问卷（自动审核）', '需签署《交易适当性补充协议》与《API交易风险披露声明》', '美股等部分品种实时行情需另行购买行情卡'].map(t => (
+          {['需已完成云锋有鱼账户开户', '需完成风险承受能力测评，且评级为进取型或激进型', '当前为灰度体验期，仅白名单用户可申请', '需完成适当性调查问卷（自动审核）', '需签署《API代碼授權協議》《API平台免責聲明》与《API交易風險披露聲明》共三份文件', '美股等部分品种实时行情需另行购买行情卡'].map(t => (
             <div key={t} style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
               <span style={{ color: TK.blueOnDark, fontSize: 12 }}>·</span>
               <span style={{ color: TK.onDarkSoft, fontSize: 12, lineHeight: 1.6 }}>{t}</span>
@@ -481,16 +481,28 @@ Object.assign(window, { PasswordModal, ConfirmModal, DocModal, ServicesScreen, I
 /* ================= 浅色页 Step2: 协议签署 (勾选 + 全文入口) ================= */
 const DOCS = [
   {
-    id: 'a', title: '交易适当性补充协议', version: 'v0.9（草案）', pages: 6,
+    id: 'a', title: 'API代碼授權協議', version: 'v1.0（法務版）', pages: 4,
+    check: '本人已閱讀、理解並同意《API代碼授權協議》之全部內容。',
     body: [
-      '本協議為《證券交易服務協議》之補充協議，適用於客戶通過應用程式介面（API）使用本公司交易服務之情形。',
-      '客戶確認，所有通過 API 下達之交易指令均由客戶自主觸發，本公司僅作為訂單路由通道接收、校驗並轉發指令至交易所，不提供任何自動化交易策略或算法托管服務。',
-      '客戶須妥善保管其 APIKey 及 APISecret，因保管不善導致之一切損失由客戶自行承擔。',
-      '（草案文本，以法務最終發布版本為準）',
+      '本協議就本公司向客戶授權使用其應用程式介面（API）相關代碼作出約定，授權僅限於非商業目的之個人使用。',
+      '客戶不得對 API 代碼進行反向工程、複製、修改、分發或用於任何商業目的；API 代碼及相關知識產權歸本公司所有。',
+      '客戶違反本協議約定時，本公司有權立即終止授權，且無需承擔任何責任。',
+      '本協議受香港法律管轄。（條款以法務發布之中英雙語版本為準）',
     ],
   },
   {
-    id: 'b', title: 'API交易風險披露聲明', version: 'v1.0', pages: 4,
+    id: 'b', title: 'API平台免責聲明', version: 'v1.0（法務版）', pages: 3,
+    check: '本人已閱讀並理解《API平台免責聲明》之全部內容，知悉並同意自行承擔使用本服務之風險。',
+    body: [
+      'API 平台由獨立技術提供商運作，本公司不就技術提供商之服務作出任何保證或承擔責任。',
+      '客戶使用 API 服務屬自願行為，須自行承擔因使用本服務而產生之全部風險及損失。',
+      'API 之運作機制對客戶而言屬「黑箱」，本公司不保證其輸出之準確性、完整性或及時性。',
+      '客戶不得利用 API 從事任何形式之市場操縱或其他違反交易規則之行為，並須遵守相關法律法規。',
+    ],
+  },
+  {
+    id: 'c', title: 'API交易風險披露聲明', version: 'v1.0', pages: 4,
+    check: '本人已閱讀並充分理解《API交易風險披露聲明》之全部內容，自願承擔使用本服務之潛在損失及法律責任。',
     body: [
       '本聲明旨在確保客戶在申請開通及使用應用程式介面（API）交易服務前，已充分閱讀、理解並知悉透過 API 進行證券交易可能涉及的各項潛在風險。',
       '3.1 技術系統風險：API 系統、伺服器或相關基礎設施可能因技術故障、網絡擁塞、例行維護或不可預見之事故而暫停服務或出現延遲，導致交易指令無法及時下達、修改或執行。',
@@ -516,9 +528,7 @@ function AgreementScreen({ onBack, onClose, onNext }) {
               <button onClick={() => setOpenDoc(d)} style={{ color: TK.blue, fontSize: 13, fontWeight: 500, padding: '6px 0 6px 12px' }}>查看全文 ›</button>
             </div>
             <CheckItem checked={!!checked[d.id]} onToggle={() => setChecked({ ...checked, [d.id]: !checked[d.id] })}
-              label={d.id === 'a'
-                ? '本人已閱讀、理解並同意《交易適當性補充協議》之全部內容。'
-                : '本人已閱讀並充分理解《API交易風險披露聲明》之全部內容，自願承擔使用本服務之潛在損失及法律責任。'} />
+              label={d.check} />
           </div>
         ))}
       </div>
@@ -568,7 +578,7 @@ function IpScreen({ ips, setIps, onBack, onClose, onNext, showToast }) {
 /* ================= 浅色页 Step4: 确认提交 ================= */
 function ConfirmScreen({ ips, keyName, setKeyName, onBack, onClose, onConfirm }) {
   const rows = [
-    ['签署文件', '《交易适当性补充协议》v0.9\n《API交易風險披露聲明》v1.0'],
+    ['签署文件', '《API代碼授權協議》v1.0\n《API平台免責聲明》v1.0\n《API交易風險披露聲明》v1.0'],
     ['IP 白名单', ips.length ? ips.join('、') : '未设置（所有 IP 均可）'],
   ];
   return (
@@ -933,7 +943,6 @@ function ManageScreen({ suspended, keys, token, onBack, onRenew, onDeleteKey, on
 /* ================= PhoneApp: 状态机 ================= */
 function PhoneApp({ status, setStatus, screen, setScreen, showToast, token, setToken, keys, setKeys, gate }) {
   const [pwd, setPwd] = useState(null);
-  const [rejected, setRejected] = useState(false);
   const [quizA, setQuizA] = useState({});
   const [quizOthers, setQuizOthers] = useState({});
 
@@ -951,13 +960,13 @@ function PhoneApp({ status, setStatus, screen, setScreen, showToast, token, setT
 
   const screens = {
     services: <ServicesScreen onEnter={enterApi} />,
-    intro: <IntroScreen rejected={rejected} gate={gate} onBack={() => setScreen('services')} onApply={() => { setRejected(false); setScreen('quiz'); }}
+    intro: <IntroScreen gate={gate} onBack={() => setScreen('services')} onApply={() => setScreen('quiz')}
       onOpenAccount={() => showToast('跳转开户流程（Demo）；开户成功后恢复可申请')}
       onDoRisk={() => showToast('跳转风险测评页（Demo）；完成测评后恢复可申请')}
       onUpdateRisk={() => showToast('跳转风险测评页（Demo）；评级更新后恢复可申请')} />,
     reviewing: <ReviewingScreen onBack={() => setScreen('services')}
       onPass={() => { showToast('审核通过（模拟）'); setScreen('agreement'); }}
-      onReject={() => { setStatus('none'); setRejected(true); setScreen('intro'); }} />,
+      onReject={() => { setStatus('none'); setScreen('notApproved'); }} />,
     quiz: <QuizScreen onBack={() => setScreen('intro')} onClose={() => setScreen('intro')} showToast={showToast} a={quizA} setA={setQuizA} others={quizOthers} setOthers={setQuizOthers}
       onSubmit={(r) => {
         if (r === 'reject') { setScreen('notApproved'); }
@@ -965,8 +974,7 @@ function PhoneApp({ status, setStatus, screen, setScreen, showToast, token, setT
         else { showToast('逻辑校验通过 · 自动审核'); setScreen('agreement'); }
       }} />,
     notApproved: <NotApprovedScreen
-      onRevise={() => setScreen('quiz')}
-      onGiveUp={() => { setRejected(true); setQuizA({}); setQuizOthers({}); setScreen('intro'); }} />,
+      onReapply={() => setScreen('quiz')} />,
     agreement: <AgreementScreen onBack={() => setScreen('quiz')} onClose={() => setScreen('intro')}
       onNext={() => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; setPwd(true); }} />,
     manage: <ManageScreen suspended={status === 'suspended'} keys={keys} token={token}
@@ -1043,7 +1051,7 @@ function App() {
       <div style={panelStyles.wrap}>
         <div style={{ marginBottom: 22 }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#0a0b0d' }}>云锋有鱼 · OpenAPI</div>
-          <div style={{ fontSize: 13, color: '#5b616e', marginTop: 4 }}>申请与管理 Flow Demo v2 · 2026-08-28</div>
+          <div style={{ fontSize: 13, color: '#5b616e', marginTop: 4 }}>申请与管理 Flow Demo v3 · 2026-09-01</div>
           <div style={{ fontSize: 11, color: '#a8acb3', marginTop: 6, lineHeight: 1.6 }}>依据 2026-08-28 v2 设计文档（基于 8/24 版副本调整）；视觉遵循 DESIGN-visual.md + APP 实际形态（深色主界面 / 浅色表单流）。</div>
         </div>
         <div style={panelStyles.card}>
@@ -1096,7 +1104,7 @@ function App() {
           ))}
         </div>
         <div style={{ fontSize: 11, color: '#a8acb3', lineHeight: 1.7, padding: '0 4px' }}>
-          演示要点（v2：问卷为 20260828 版全量 19 题，按 4 章节分页、选项题下平铺、按页必答校验）：1.1 选「無」→ 子题与 1.2 不展示；无经验或经验不足 1 年、或 3.1 选「長期資本增值」→ 4.1 做市/高頻置灰；每日频率少于 50 筆 → 1.2 高頻置灰；置灰选项原位旁注统一提示；任一「其他」填空 → 提交后转人工审核；回改先答题 → 冲突答案清除并标记「需重新確認」。风险承受能力题已删除，改为介绍页入口拦截（仅进取型/激进型可申请，面板可预览拦截态）。介绍页资格预检三门槛：已开户成功、风险测评且为进取型/激进型、在灰度白名单内；未开户/未做测评/测评不符/不在白名单均置灰并引导。选择「做市」或「高頻交易」的客户，开通后将自动通知交易部/风险部/合规部（后台动作，页面不呈现）。协议「完成签署并开通」唤起交易密码验证，一次验证完成签署留痕与开通，随后落管理页创建首个 Key。Key 管理策略：同一账户可创建多个 Key，但仅有一个「生效中」；新建 Key 自动生效并切换其他 Key 为未生效；APIKey / APISecret 均做掩码展示，点击「查看」需校验交易密码后弹窗展示完整信息并支持复制全部；创建成功弹窗同样支持复制全部；IP 白名单改为非必填，未填写时该 Key 对所有 IP 有效。
+          演示要点（v3：问卷为 20260828 版全量 19 题，按 4 章节分页、选项题下平铺、按页必答校验）：1.1 选「無」→ 子题与 1.2 渐进隐藏（保留）；联动置灰与「可能导致申请失败」提示已移除（9/1）——无经验/经验不足 1 年或 3.1 选「長期資本增值」仍在 4.1 选高頻交易，或每日频率少于 50 筆仍在 1.2 选高頻交易，提交后直接进入不予通过结果页（终态）；审核中点「模拟驳回」同样进入该页，单 CTA「重新申请」（保留已填答案返回问卷，无需冷却期）。任一「其他」填空 → 提交后转人工审核。风险承受能力题已删除，改为介绍页入口拦截（仅进取型/激进型可申请，面板可预览拦截态）。介绍页资格预检三门槛：已开户成功、风险测评且为进取型/激进型、在灰度白名单内；未开户/未做测评/测评不符/不在白名单均置灰并引导。选择「高頻交易」的客户，开通后将自动通知交易部/风险部/合规部（后台动作，页面不呈现）。协议签署三份文件（《API代碼授權協議》+《API平台免責聲明》+《API交易風險披露聲明》），「完成签署并开通」唤起交易密码验证，一次验证完成签署留痕与开通，随后落管理页创建首个 Key。Key 管理策略：同一账户可创建多个 Key，但仅有一个「生效中」；新建 Key 自动生效并切换其他 Key 为未生效；APIKey / APISecret 均做掩码展示，点击「查看」需校验交易密码后弹窗展示完整信息并支持复制全部；创建成功弹窗同样支持复制全部；IP 白名单改为非必填，未填写时该 Key 对所有 IP 有效。
         </div>
       </div>
 
@@ -1114,12 +1122,11 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 </script>
 <script type="text/babel">
-/* ================= Step1 问卷 v2: 20260828 版全量题目 · 按章节分页 · 选项平铺 =================
+/* ================= Step1 问卷 v3: 20260828 版全量题目 · 按章节分页 · 选项平铺 =================
    - 4 个章节分 4 页, 顶部 LightNav 分段进度条 + 章节名, 底部上一步/下一步(末页提交)
-   - 选项直接平铺在题下 (单选/多选卡片), 废弃半屏选择器
-   - 联动置灰 3 条 (MVP 硬编码): ②无经验或经验不足1年 → 4.1 做市/高频置灰;
-     ③每日频率<50笔 → 1.2 高频置灰; ④3.1 选「長期資本增值」→ 4.1 做市/高频置灰
-   - 1.1 选「無」→ 子题与 1.2 渐进隐藏; 回改先答题 → 清除冲突答案并标记「需重新確認」
+   - 选项直接平铺在题下 (单选/多选卡片), 废弃半屏选择器; v3 起无置灰/无统一提示
+   - 1.1 选「無」→ 子题与 1.2 渐进隐藏 (保留); 联动置灰已移除 (9/1)
+   - 提交时后端统一校验规则 ②③④: 命中逻辑矛盾 → 不予通过结果页 (终态, 不再退回更新)
    - 任一「其他」填空有内容 → 提交后转人工审核 */
 
 const QUIZ_SECTIONS = ['第一部分：API交易與投資經驗', '第二部分：技術能力評估', '第三部分：投資目標與風險承受能力', '第四部分：API交易算法說明'];
@@ -1133,19 +1140,19 @@ const QUESTIONS = [
   { id: 'q11c', sec: 0, text: '您通常通過API交易的證券種類（可多選）', type: 'm', opts: ['港股', '美股', 'A股', 'ETF', '期權', '期貨', '其他'], otherFill: true, vis: a => hasExpAns(a.q11) },
   { id: 'q11d', sec: 0, text: '您過往通過API進行的平均每日交易頻率', type: 's', opts: ['無', '1-10筆', '10-50筆', '50-200筆', '200筆以上'], vis: a => hasExpAns(a.q11) },
   { id: 'q12', sec: 0, text: '您是否有過使用自動化交易策略或算法交易的經驗？', type: 's', opts: EXP_OPTS, vis: a => hasExpAns(a.q11) },
-  { id: 'q12a', sec: 0, text: '如曾使用自動化交易策略，請簡要描述策略類型', type: 's', opts: ['趨勢跟蹤', '均值回歸', '套利', '做市', '高頻交易', '其他'], otherFill: true, vis: a => hasExpAns(a.q12), dis: (a, R) => ({ '高頻交易': R.hfDisabled12 }) },
+  { id: 'q12a', sec: 0, text: '如曾使用自動化交易策略，請簡要描述策略類型', type: 's', opts: ['趨勢跟蹤', '均值回歸', '套利', '高頻交易', '其他'], otherFill: true, vis: a => hasExpAns(a.q12) },
 
   { id: 'q21a', sec: 1, text: '您是否理解以下API技術概念（可多選）', type: 'm', opts: ['API密鑰管理', 'RESTful API', 'WebSocket', 'JSON格式', '速率限制（Rate Limiting）', '身份認證機制（如OAuth）', '以上皆理解'] },
   { id: 'q21b', sec: 1, text: '您是否了解API交易中的以下風險（可多選）', type: 'm', opts: ['系統中斷風險', '網絡延遲風險', '訂單重複提交風險', 'API密鑰洩露風險', '以上皆了解'] },
   { id: 'q22a', sec: 1, text: '您是否計劃對API交易系統進行實時監控？', type: 's', opts: ['是，全天候監控', '是，非全天候監控', '否'] },
   { id: 'q22b', sec: 1, text: '您是否設有交易止損機制？', type: 's', opts: ['是，已設置自動止損', '是，手動設置止損', '否'] },
 
-  { id: 'q31', sec: 2, text: '您開通API交易的主要投資目標（可多選）', type: 'm', opts: ['長期資本增值', '短期交易獲利', '套利', '做市', '資產配置', '其他'], otherFill: true },
+  { id: 'q31', sec: 2, text: '您開通API交易的主要投資目標（可多選）', type: 'm', opts: ['長期資本增值', '短期交易獲利', '套利', '資產配置', '其他'], otherFill: true },
   { id: 'q32a', sec: 2, text: '您是否計劃通過API進行槓桿交易？', type: 's', opts: ['是', '否'] },
   { id: 'q32b', sec: 2, text: '您是否計劃通過API交易衍生產品（如期權、期貨、窩輪、牛熊證等）？', type: 's', opts: ['是', '否'] },
 
   { id: 'q41sig', sec: 3, text: '交易策略的決策依據/信號來源（可多選）', type: 'm', opts: ['技術指標（均線、MACD、動量等）', '價量資料', '盤口訂單簿', '基本面資料（財報、估值等）', '新聞 / 公告 / 輿情事件', '統計（價差、相關性等）', '機器學習模型', '其他'], otherFill: true },
-  { id: 'q41t', sec: 3, text: '交易策略類型（可多選）', note: '選擇「做市」或「高頻交易」的客戶，開通後將被納入重點關注', type: 'm', opts: ['趨勢跟蹤', '均值回歸', '套利', '做市', '高頻交易', '統計套利', '機器學習驅動', '其他'], otherFill: true, dis: (a, R) => ({ '做市': R.hfMmDisabled41, '高頻交易': R.hfMmDisabled41 }) },
+  { id: 'q41t', sec: 3, text: '交易策略類型（可多選）', note: '選擇「高頻交易」的客戶，開通後將被納入重點關注', type: 'm', opts: ['趨勢跟蹤', '均值回歸', '套利', '高頻交易', '統計套利', '機器學習驅動', '其他'], otherFill: true },
   { id: 'q41x', sec: 3, text: '交易策略下訂單的出入場及執行方式（可多選）', type: 'm', opts: ['信號觸發自動開平倉（全自動）', '信號觸發、人工確認後下單（半自動）', '固定止盈止損出場', '信號反轉出場', '定時/到期強制平倉', '其他'], otherFill: true },
   { id: 'q42', sec: 3, text: '您是否設有以下風控機制（可多選）', type: 'm', opts: ['自動止損', '自動止盈', '每日交易限額', '單筆交易限額', '最大持倉限制', '頻率限制', '其他'], otherFill: true },
   { id: 'q42e', sec: 3, text: '如發生異常情況（如系統故障、市場劇烈波動），您的應急處理方案（可多選）', type: 'm', opts: ['自動熔斷/暫停策略', '自動止損平倉', '撤單重試', '切換人工手動交易', '告警通知人工介入', '其他'], otherFill: true },
@@ -1154,7 +1161,6 @@ const QUESTIONS = [
 function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, setOthers }) {
   const [page, setPage] = useState(0);
   const [missed, setMissed] = useState([]);
-  const [reconfirm, setReconfirm] = useState({});
   const [exitAsk, setExitAsk] = useState(false);
   const hasInput = Object.keys(a).length > 0 || Object.values(others).some(v => (v || '').trim());
   const scrollTop = () => { const el = document.getElementById('phone-content'); if (el) el.scrollTop = 0; };
@@ -1163,33 +1169,11 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, set
   const set = (id, v) => {
     setA(prev => ({ ...prev, [id]: v }));
     setMissed(prev => prev.filter(x => x !== id));
-    setReconfirm(prev => ({ ...prev, [id]: false }));
   };
   const toggle = (id, v) => {
     const cur = a[id] || [];
     set(id, cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]);
   };
-
-  // —— 联动置灰规则（MVP 硬编码，8/28 缩减为 3 条）——
-  const R = {
-    lowExp: !hasExpAns(a.q11) || (a.q11a && ['6個月以下', '6個月-1年'].includes(a.q11a)), // 规则② (无经验视同不足 1 年)
-    hfDisabled12: !!(a.q11d && ['無', '1-10筆', '10-50筆'].includes(a.q11d)),                   // 规则③
-  };
-  R.hfMmDisabled41 = R.lowExp || (a.q31 || []).includes('長期資本增值');                        // 规则② + ④
-
-  // 回改先答题 → 清除冲突答案并标记「需重新確認」
-  useEffect(() => {
-    if (R.hfMmDisabled41 && (a.q41t || []).some(v => v === '做市' || v === '高頻交易')) {
-      setA(prev => ({ ...prev, q41t: prev.q41t.filter(v => v !== '做市' && v !== '高頻交易') }));
-      setReconfirm(prev => ({ ...prev, q41t: true }));
-    }
-  }, [R.hfMmDisabled41]);
-  useEffect(() => {
-    if (R.hfDisabled12 && a.q12a === '高頻交易') {
-      setA(prev => ({ ...prev, q12a: null }));
-      setReconfirm(prev => ({ ...prev, q12a: true }));
-    }
-  }, [R.hfDisabled12]);
 
   const visible = QUESTIONS.filter(q => !q.vis || q.vis(a));
   const isAnswered = (q) => {
@@ -1225,6 +1209,12 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, set
       const missing = visible.filter(q => q.sec === p && !isAnswered(q)).map(q => q.id);
       if (missing.length) { locate(missing, p); return; }
     }
+    // 逻辑校验规则 ②③④（9/1：联动置灰移除后改为提交时统一校验）：命中逻辑矛盾 → 不予通过结果页
+    const mmHf = (a.q41t || []).some(v => v === '高頻交易');
+    const lowExp = !hasExpAns(a.q11) || (a.q11a && ['6個月以下', '6個月-1年'].includes(a.q11a));
+    const hf12 = !!(a.q11d && ['無', '1-10筆', '10-50筆'].includes(a.q11d));
+    const conflict = (mmHf && (lowExp || (a.q31 || []).includes('長期資本增值'))) || (a.q12a === '高頻交易' && hf12);
+    if (conflict) { onSubmit('reject'); return; }
     const manual = visible.some(q => q.otherFill && (q.type === 'm' ? (a[q.id] || []).includes('其他') : a[q.id] === '其他') && (others[q.id] || '').trim());
     onSubmit(manual ? 'manual' : 'auto');
   };
@@ -1237,7 +1227,6 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, set
         <div style={{ fontSize: 16, fontWeight: 700, color: TK.ink, margin: '6px 0 4px' }}>{QUIZ_SECTIONS[page]}</div>
         <div style={{ fontSize: 11, color: TK.mutedSoft, marginBottom: 18 }}>第 {page + 1} / 4 部分 · 每題必答，不得跳過</div>
         {pageQs.map(q => {
-          const disMap = q.dis ? q.dis(a, R) : null;
           const err = missed.includes(q.id);
           const otherOn = q.otherFill && (q.type === 'm' ? (a[q.id] || []).includes('其他') : a[q.id] === '其他');
           return (
@@ -1245,14 +1234,9 @@ function QuizScreen({ onBack, onClose, onSubmit, showToast, a, setA, others, set
               <div style={{ fontSize: 15, fontWeight: 600, color: TK.ink, marginBottom: 4, lineHeight: 1.5 }}>{q.text}</div>
               {q.note && <div style={{ fontSize: 12, color: TK.muted, marginBottom: 10, lineHeight: 1.5 }}>{q.note}</div>}
               {!q.note && <div style={{ height: 6 }} />}
-              {reconfirm[q.id] && (
-                <div style={{ fontSize: 11, color: '#b57f00', background: 'rgba(244,176,0,0.08)', borderRadius: 8, padding: '7px 12px', marginBottom: 10, lineHeight: 1.5 }}>⚠ 因先前答案變更，此題需重新確認</div>
-              )}
               {q.opts.map(o => (
                 <Option key={o} label={o} multi={q.type === 'm'}
                   selected={q.type === 'm' ? (a[q.id] || []).includes(o) : a[q.id] === o}
-                  disabled={!!(disMap && disMap[o])}
-                  disabledHint="選擇該選項可能導致申請失敗"
                   onClick={() => q.type === 'm' ? toggle(q.id, o) : set(q.id, o)} />
               ))}
               {otherOn && (
@@ -1306,8 +1290,8 @@ function PhoneOverlay({ children, style }) {
 Object.assign(window, { PhoneOverlay });
 </script>
 <script type="text/babel">
-/* ================= 浅色页: 不予通过结果页（人工审核驳回终态；8/28 起原规则⑤途径随风险题删除而移除，由入口评级拦截前置替代） ================= */
-function NotApprovedScreen({ onRevise, onGiveUp }) {
+/* ================= 浅色页: 不予通过结果页（终态；9/1：自动逻辑校验命中规则②③④与人工审核驳回共用，原规则⑤途径已随风险题删除移除） ================= */
+function NotApprovedScreen({ onReapply }) {
   return (
     <div style={{ background: TK.canvas, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: 1, padding: '48px 26px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -1317,12 +1301,11 @@ function NotApprovedScreen({ onRevise, onGiveUp }) {
           您申報的資料未能通過本次審核，本次申請未獲通過。如有疑問請聯繫客服。
         </div>
         <div style={{ fontSize: 12, color: TK.muted, lineHeight: 1.7, textAlign: 'center', marginTop: 14, background: TK.surfaceSoft, borderRadius: 12, padding: '12px 16px' }}>
-          如您此前填寫有誤，可返回修改答案後重新提交；如相關情況發生變化，請更新後重新申請。
+          如您此前填寫有誤，可重新申請並修改答案後再次提交；如相關情況發生變化，請更新後重新申請。
         </div>
       </div>
       <div style={{ padding: '12px 20px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <button onClick={onRevise} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 16, fontWeight: 600 }}>返回修改答案</button>
-        <button onClick={onGiveUp} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.canvas, border: `1.5px solid ${TK.hairline}`, color: TK.body, fontSize: 16, fontWeight: 600 }}>放弃申请</button>
+        <button onClick={onReapply} style={{ width: '100%', height: 50, borderRadius: 100, background: TK.blue, color: '#fff', fontSize: 16, fontWeight: 600 }}>重新申请</button>
       </div>
     </div>
   );
